@@ -135,6 +135,172 @@ def transformar_dim_data(vendas):
         ]
     ]
 
+def transformar_fact_vendas(
+    vendas,
+    itens_venda,
+    dim_cliente,
+    dim_livro,
+    dim_pagamento,
+    dim_data,
+):
+   
+   # Constrói a tabela de factos de vendas.
+
+    # 1. Apenas vendas concluídas
+
+    vendas_concluidas = vendas[
+        vendas["status"] == "Concluída"
+    ].copy()
+
+    # 2. Preparar vendas e itens
+
+    vendas_base = vendas_concluidas[
+        [
+            "id",
+            "cliente_id",
+            "data_venda",
+            "metodo_pagamento",
+        ]
+    ].copy()
+
+    vendas_base = vendas_base.rename(
+        columns={
+            "id": "venda_id_origem"
+        }
+    )
+
+
+    itens_base = itens_venda.copy()
+
+    itens_base = itens_base.rename(
+        columns={
+            "id": "item_venda_id_origem"
+        }
+    )
+
+    # 3. Juntar cada item à respetiva venda
+
+    fact = itens_base.merge(
+        vendas_base,
+        left_on="venda_id",
+        right_on="venda_id_origem",
+        how="inner",
+        validate="many_to_one",
+    )
+
+    # 4. Criar data_key
+
+    fact["data_key"] = (
+        pd.to_datetime(fact["data_venda"])
+        .dt.strftime("%Y%m%d")
+        .astype(int)
+    )
+
+    # 5. Lookup da dimensão LIVRO
+    fact = fact.merge(
+        dim_livro[
+            [
+                "livro_key",
+                "livro_id_origem",
+            ]
+        ],
+        left_on="livro_id",
+        right_on="livro_id_origem",
+        how="left",
+        validate="many_to_one",
+    )
+
+ # 6. Lookup da dimensão PAGAMENTO
+    fact = fact.merge(
+        dim_pagamento[
+            [
+                "pagamento_key",
+                "metodo_pagamento",
+            ]
+        ],
+        on="metodo_pagamento",
+        how="left",
+        validate="many_to_one",
+    )
+
+    # 7. Lookup da dimensão CLIENTE
+    clientes_conhecidos = dim_cliente[
+        dim_cliente["cliente_id_origem"].notna()
+    ][
+        [
+            "cliente_key",
+            "cliente_id_origem",
+        ]
+    ].copy()
+
+
+    fact = fact.merge(
+        clientes_conhecidos,
+        left_on="cliente_id",
+        right_on="cliente_id_origem",
+        how="left",
+        validate="many_to_one",
+    )
+
+
+    # Descobrir a surrogate key do cliente desconhecido
+    cliente_desconhecido_key = int(
+        dim_cliente.loc[
+            dim_cliente["cliente_id_origem"].isna(),
+            "cliente_key",
+        ].iloc[0]
+    )
+
+
+    # Vendas sem cliente recebem essa key
+    fact["cliente_key"] = (
+        fact["cliente_key"]
+        .fillna(cliente_desconhecido_key)
+        .astype("int64")
+    )
+
+    # 8. Validações
+
+    if fact["livro_key"].isna().any():
+        raise ValueError(
+            "Existem livros sem correspondência na dim_livro."
+        )
+
+    if fact["pagamento_key"].isna().any():
+        raise ValueError(
+            "Existem métodos de pagamento sem correspondência."
+        )
+
+    if not fact["data_key"].isin(
+        dim_data["data_key"]
+    ).all():
+        raise ValueError(
+            "Existem datas sem correspondência na dim_data."
+        )
+
+
+    # Converter keys para inteiros
+    fact["livro_key"] = fact["livro_key"].astype("int64")
+    fact["pagamento_key"] = fact["pagamento_key"].astype("int64")
+
+    # 9. Selecionar apenas as colunas da fact
+    
+    fact = fact[
+        [
+            "data_key",
+            "cliente_key",
+            "livro_key",
+            "pagamento_key",
+            "venda_id_origem",
+            "item_venda_id_origem",
+            "quantidade",
+            "preco_unitario",
+            "subtotal",
+        ]
+    ]
+
+
+    return fact
 
 def main():
 
