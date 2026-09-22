@@ -4,9 +4,7 @@ from extract import extrair_tabela
 
 
 def transformar_dim_cliente(clientes):
- 
-   # Transforma os clientes da base operacional na dimensão cliente do Data Warehouse.
-
+    # Cria a dimensão cliente
     dim_cliente = clientes[
         [
             "id",
@@ -25,9 +23,7 @@ def transformar_dim_cliente(clientes):
 
 
 def transformar_dim_livro(livros):
-
-    # Cria a dimensão livro.
-
+    # Cria a dimensão livro
     dim_livro = livros[
         [
             "id",
@@ -48,9 +44,7 @@ def transformar_dim_livro(livros):
 
 
 def transformar_dim_pagamento(vendas):
-  
-   # Cria uma dimensão com os métodos de pagamento existentes nas vendas.
-
+    # Cria a dimensão pagamento
     dim_pagamento = (
         vendas[["metodo_pagamento"]]
         .drop_duplicates()
@@ -62,9 +56,7 @@ def transformar_dim_pagamento(vendas):
 
 
 def transformar_dim_data(vendas):
- 
-    # Cria a dimensão calendário a partir das datas existentes nas vendas.
-
+    # Cria a dimensão data
     datas = vendas["data_venda"].dt.date.unique()
 
     dim_data = pd.DataFrame(
@@ -76,7 +68,9 @@ def transformar_dim_data(vendas):
     dim_data = dim_data.sort_values("data").reset_index(drop=True)
 
     dim_data["data_key"] = (
-        dim_data["data"].dt.strftime("%Y%m%d").astype(int)
+        dim_data["data"]
+        .dt.strftime("%Y%m%d")
+        .astype(int)
     )
 
     dim_data["dia"] = dim_data["data"].dt.day
@@ -87,34 +81,38 @@ def transformar_dim_data(vendas):
     dim_data["nome_mes"] = (
         dim_data["data"]
         .dt.month
-        .map({
-            1: "Janeiro",
-            2: "Fevereiro",
-            3: "Março",
-            4: "Abril",
-            5: "Maio",
-            6: "Junho",
-            7: "Julho",
-            8: "Agosto",
-            9: "Setembro",
-            10: "Outubro",
-            11: "Novembro",
-            12: "Dezembro",
-        })
+        .map(
+            {
+                1: "Janeiro",
+                2: "Fevereiro",
+                3: "Março",
+                4: "Abril",
+                5: "Maio",
+                6: "Junho",
+                7: "Julho",
+                8: "Agosto",
+                9: "Setembro",
+                10: "Outubro",
+                11: "Novembro",
+                12: "Dezembro",
+            }
+        )
     )
 
     dim_data["dia_semana"] = (
         dim_data["data"]
         .dt.dayofweek
-        .map({
-            0: "Segunda-feira",
-            1: "Terça-feira",
-            2: "Quarta-feira",
-            3: "Quinta-feira",
-            4: "Sexta-feira",
-            5: "Sábado",
-            6: "Domingo",
-        })
+        .map(
+            {
+                0: "Segunda-feira",
+                1: "Terça-feira",
+                2: "Quarta-feira",
+                3: "Quinta-feira",
+                4: "Sexta-feira",
+                5: "Sábado",
+                6: "Domingo",
+            }
+        )
     )
 
     dim_data["fim_semana"] = (
@@ -135,6 +133,46 @@ def transformar_dim_data(vendas):
         ]
     ]
 
+
+def transformar_dim_autor(autores):
+    # Cria a dimensão autor
+    dim_autor = autores[
+        [
+            "id",
+            "nome",
+            "nacionalidade",
+            "data_nascimento",
+        ]
+    ].copy()
+
+    dim_autor = dim_autor.rename(
+        columns={
+            "id": "autor_id_origem"
+        }
+    )
+
+    return dim_autor
+
+
+def transformar_dim_genero(generos):
+    # Cria a dimensão género
+    dim_genero = generos[
+        [
+            "id",
+            "nome",
+            "descricao",
+        ]
+    ].copy()
+
+    dim_genero = dim_genero.rename(
+        columns={
+            "id": "genero_id_origem"
+        }
+    )
+
+    return dim_genero
+
+
 def transformar_fact_vendas(
     vendas,
     itens_venda,
@@ -143,17 +181,12 @@ def transformar_fact_vendas(
     dim_pagamento,
     dim_data,
 ):
-   
-   # Constrói a tabela de factos de vendas.
-
-    # 1. Apenas vendas concluídas
-
+    # Mantém apenas vendas concluídas
     vendas_concluidas = vendas[
         vendas["status"] == "Concluída"
     ].copy()
 
-    # 2. Preparar vendas e itens
-
+    # Seleciona os dados necessários das vendas
     vendas_base = vendas_concluidas[
         [
             "id",
@@ -169,7 +202,7 @@ def transformar_fact_vendas(
         }
     )
 
-
+    # Prepara os itens das vendas
     itens_base = itens_venda.copy()
 
     itens_base = itens_base.rename(
@@ -178,8 +211,7 @@ def transformar_fact_vendas(
         }
     )
 
-    # 3. Juntar cada item à respetiva venda
-
+    # Junta cada item à venda a que pertence
     fact = itens_base.merge(
         vendas_base,
         left_on="venda_id",
@@ -188,15 +220,14 @@ def transformar_fact_vendas(
         validate="many_to_one",
     )
 
-    # 4. Criar data_key
-
+    # Cria a chave da dimensão data
     fact["data_key"] = (
         pd.to_datetime(fact["data_venda"])
         .dt.strftime("%Y%m%d")
         .astype(int)
     )
 
-    # 5. Lookup da dimensão LIVRO
+    # Procura a chave do livro no Data Warehouse
     fact = fact.merge(
         dim_livro[
             [
@@ -210,7 +241,7 @@ def transformar_fact_vendas(
         validate="many_to_one",
     )
 
- # 6. Lookup da dimensão PAGAMENTO
+    # Procura a chave do método de pagamento
     fact = fact.merge(
         dim_pagamento[
             [
@@ -223,7 +254,7 @@ def transformar_fact_vendas(
         validate="many_to_one",
     )
 
-    # 7. Lookup da dimensão CLIENTE
+    # Separa apenas os clientes identificados
     clientes_conhecidos = dim_cliente[
         dim_cliente["cliente_id_origem"].notna()
     ][
@@ -233,7 +264,7 @@ def transformar_fact_vendas(
         ]
     ].copy()
 
-
+    # Procura a chave do cliente
     fact = fact.merge(
         clientes_conhecidos,
         left_on="cliente_id",
@@ -242,8 +273,7 @@ def transformar_fact_vendas(
         validate="many_to_one",
     )
 
-
-    # Descobrir a surrogate key do cliente desconhecido
+    # Descobre a chave do cliente não identificado
     cliente_desconhecido_key = int(
         dim_cliente.loc[
             dim_cliente["cliente_id_origem"].isna(),
@@ -251,26 +281,26 @@ def transformar_fact_vendas(
         ].iloc[0]
     )
 
-
-    # Vendas sem cliente recebem essa key
+    # Vendas sem cliente recebem a chave do cliente não identificado
     fact["cliente_key"] = (
         fact["cliente_key"]
         .fillna(cliente_desconhecido_key)
         .astype("int64")
     )
 
-    # 8. Validações
-
+    # Confirma que todos os livros foram encontrados
     if fact["livro_key"].isna().any():
         raise ValueError(
             "Existem livros sem correspondência na dim_livro."
         )
 
+    # Confirma que todos os pagamentos foram encontrados
     if fact["pagamento_key"].isna().any():
         raise ValueError(
             "Existem métodos de pagamento sem correspondência."
         )
 
+    # Confirma que todas as datas existem na dimensão data
     if not fact["data_key"].isin(
         dim_data["data_key"]
     ).all():
@@ -278,13 +308,10 @@ def transformar_fact_vendas(
             "Existem datas sem correspondência na dim_data."
         )
 
-
-    # Converter keys para inteiros
     fact["livro_key"] = fact["livro_key"].astype("int64")
     fact["pagamento_key"] = fact["pagamento_key"].astype("int64")
 
-    # 9. Selecionar apenas as colunas da fact
-    
+    # Mantém apenas as colunas da tabela de factos
     fact = fact[
         [
             "data_key",
@@ -299,43 +326,149 @@ def transformar_fact_vendas(
         ]
     ]
 
-
     return fact
 
+def transformar_bridge_livro_autor(
+    livro_autores,
+    dim_livro,
+    dim_autor,
+):
+    # Liga os IDs originais às chaves do Data Warehouse
+    bridge = livro_autores.merge(
+        dim_livro[
+            [
+                "livro_key",
+                "livro_id_origem",
+            ]
+        ],
+        left_on="livro_id",
+        right_on="livro_id_origem",
+        how="left",
+        validate="many_to_one",
+    )
+
+    bridge = bridge.merge(
+        dim_autor[
+            [
+                "autor_key",
+                "autor_id_origem",
+            ]
+        ],
+        left_on="autor_id",
+        right_on="autor_id_origem",
+        how="left",
+        validate="many_to_one",
+    )
+
+    if bridge["livro_key"].isna().any():
+        raise ValueError(
+            "Existem livros sem correspondência na dim_livro."
+        )
+
+    if bridge["autor_key"].isna().any():
+        raise ValueError(
+            "Existem autores sem correspondência na dim_autor."
+        )
+
+    bridge["livro_key"] = bridge["livro_key"].astype("int64")
+    bridge["autor_key"] = bridge["autor_key"].astype("int64")
+
+    return bridge[
+        [
+            "livro_key",
+            "autor_key",
+        ]
+    ].drop_duplicates()
+
+
+def transformar_bridge_livro_genero(
+    livro_generos,
+    dim_livro,
+    dim_genero,
+):
+    # Liga os IDs originais às chaves do Data Warehouse
+    bridge = livro_generos.merge(
+        dim_livro[
+            [
+                "livro_key",
+                "livro_id_origem",
+            ]
+        ],
+        left_on="livro_id",
+        right_on="livro_id_origem",
+        how="left",
+        validate="many_to_one",
+    )
+
+    bridge = bridge.merge(
+        dim_genero[
+            [
+                "genero_key",
+                "genero_id_origem",
+            ]
+        ],
+        left_on="genero_id",
+        right_on="genero_id_origem",
+        how="left",
+        validate="many_to_one",
+    )
+
+    if bridge["livro_key"].isna().any():
+        raise ValueError(
+            "Existem livros sem correspondência na dim_livro."
+        )
+
+    if bridge["genero_key"].isna().any():
+        raise ValueError(
+            "Existem géneros sem correspondência na dim_genero."
+        )
+
+    bridge["livro_key"] = bridge["livro_key"].astype("int64")
+    bridge["genero_key"] = bridge["genero_key"].astype("int64")
+
+    return bridge[
+        [
+            "livro_key",
+            "genero_key",
+        ]
+    ].drop_duplicates()
+
 def main():
-
-    print("=" * 60)
     print("SABIN - ETL | TRANSFORMAÇÃO")
-    print("=" * 60)
 
+    # Extrair dados da base operacional
     vendas = extrair_tabela("vendas")
     livros = extrair_tabela("livros")
     clientes = extrair_tabela("clientes")
+    autores = extrair_tabela("autores")
+    generos = extrair_tabela("generos")
 
-    # Regra de negócio:
-    # apenas vendas concluídas entram no DW
+    # Apenas vendas concluídas entram nas dimensões analíticas
     vendas = vendas[
         vendas["status"] == "Concluída"
     ].copy()
 
+    # Transformar os dados
     dim_cliente = transformar_dim_cliente(clientes)
     dim_livro = transformar_dim_livro(livros)
     dim_pagamento = transformar_dim_pagamento(vendas)
     dim_data = transformar_dim_data(vendas)
+    dim_autor = transformar_dim_autor(autores)
+    dim_genero = transformar_dim_genero(generos)
 
+    # Mostrar os resultados
     print(f"dim_cliente   -> {len(dim_cliente)} linha(s)")
     print(f"dim_livro     -> {len(dim_livro)} linha(s)")
     print(f"dim_pagamento -> {len(dim_pagamento)} linha(s)")
     print(f"dim_data      -> {len(dim_data)} linha(s)")
+    print(f"dim_autor     -> {len(dim_autor)} linha(s)")
+    print(f"dim_genero    -> {len(dim_genero)} linha(s)")
 
-    print("\nDIM_CLIENTE:")
-    print(dim_cliente.head())
+    print("\nDIM_AUTOR:")
+    print(dim_autor.head())
 
-    print("\nDIM_PAGAMENTO:")
-    print(dim_pagamento)
-
-    print("\nDIM_DATA:")
-    print(dim_data.head())
+    print("\nDIM_GENERO:")
+    print(dim_genero.head())
 
 
 if __name__ == "__main__":

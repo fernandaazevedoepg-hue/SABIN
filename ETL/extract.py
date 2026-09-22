@@ -38,11 +38,13 @@ def main():
         "itens_venda",
         "livros",
         "clientes",
+        "autores",
+        "generos",
+        "livro_autores",
+        "livro_generos",
     ]
 
-    print("=" * 60)
     print("SABIN - ETL | EXTRAÇÃO")
-    print("=" * 60)
 
     dados = {}
 
