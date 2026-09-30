@@ -1,0 +1,2 @@
+﻿modelo,mae,rmse,r2,ultimo_mes_real,ultima_receita_real,proximo_mes,receita_prevista_proximo_mes,variacao_prevista_percent,tendencia
+Ridge Regression,262.22,345.14,0.5387,2026-09-01,1755.9,2026-10-01,1231.04,-29.89,Descida
