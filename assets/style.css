@@ -39,10 +39,24 @@ body {
 }
 
 .menu {
-    margin-top: 45px;
+    margin-top: 38px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 28px;
+}
+
+.menu-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.menu-label {
+    margin: 0 0 4px 8px;
+    color: #94a3b8;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.4px;
 }
 
 .menu-button {
@@ -129,7 +143,6 @@ body {
 .value-warning {
     color: #f59e0b;
 }
-
 
 /* Visão Geral */
 
@@ -250,6 +263,237 @@ body {
     color: #2563eb;
 }
 
+/* Registar Venda */
+
+.sale-info-banner {
+    margin-top: 25px;
+    padding: 14px 16px;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 10px;
+    color: #1e3a8a;
+    line-height: 1.5;
+}
+
+.sale-layout {
+    margin-top: 20px;
+    display: grid;
+    grid-template-columns: 0.9fr 1.1fr;
+    gap: 20px;
+    align-items: start;
+}
+
+.sale-form-panel,
+.sale-cart-panel {
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 24px;
+}
+
+.sale-form-panel h3,
+.sale-cart-panel h3 {
+    margin-top: 0;
+}
+
+.form-label {
+    display: block;
+    margin-top: 18px;
+    margin-bottom: 7px;
+    color: #475569;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.sale-dropdown {
+    width: 100%;
+}
+
+.sale-number-input {
+    width: 100%;
+    height: 44px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 0 12px;
+    font-size: 14px;
+}
+
+.sale-add-button {
+    width: 100%;
+    margin-top: 16px;
+}
+
+.sale-payment-section {
+    margin-top: 25px;
+    padding-top: 8px;
+    border-top: 1px solid #e2e8f0;
+}
+
+.sale-book-info {
+    margin-top: 12px;
+}
+
+.sale-book-summary {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+}
+
+.sale-book-summary > div {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.sale-book-summary span {
+    color: #64748b;
+    font-size: 11px;
+}
+
+.sale-book-summary strong {
+    font-size: 14px;
+}
+
+.sale-cart-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 20px;
+    align-items: flex-start;
+}
+
+.sale-cart-header h3 {
+    margin-bottom: 5px;
+}
+
+.sale-cart-header p {
+    margin: 0;
+    color: #64748b;
+    font-size: 13px;
+}
+
+.secondary-button {
+    border: 1px solid #cbd5e1;
+    background: white;
+    color: #475569;
+    border-radius: 8px;
+    padding: 9px 14px;
+    cursor: pointer;
+}
+
+.secondary-button:hover {
+    background: #f8fafc;
+}
+
+.empty-cart {
+    margin-top: 20px;
+    padding: 28px;
+    text-align: center;
+    color: #64748b;
+    background: #f8fafc;
+    border: 1px dashed #cbd5e1;
+    border-radius: 8px;
+}
+
+.sale-cart-table {
+    width: 100%;
+    margin-top: 20px;
+    border-collapse: collapse;
+}
+
+.sale-cart-table th {
+    text-align: left;
+    background: #f1f5f9;
+    color: #475569;
+    padding: 11px;
+    font-size: 12px;
+    border-bottom: 1px solid #cbd5e1;
+}
+
+.sale-cart-table td {
+    padding: 12px 11px;
+    border-bottom: 1px solid #e2e8f0;
+    font-size: 13px;
+}
+
+.sale-book-title {
+    font-weight: 600;
+}
+
+.sale-total-box {
+    margin-top: 20px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 9px;
+    padding: 18px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.sale-total-box span {
+    color: #64748b;
+}
+
+.sale-total-box strong {
+    font-size: 24px;
+}
+
+.sale-submit-button {
+    width: 100%;
+    margin-top: 15px;
+}
+
+.sale-success-message,
+.sale-error-message,
+.sale-neutral-message {
+    margin-top: 12px;
+    padding: 11px 13px;
+    border-radius: 8px;
+    font-size: 13px;
+}
+
+.sale-success-message {
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    color: #166534;
+}
+
+.sale-error-message {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
+}
+
+.sale-neutral-message {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    color: #475569;
+}
+
+.sale-final-success {
+    margin-top: 15px;
+    padding: 16px;
+    background: #f0fdf4;
+    border: 1px solid #86efac;
+    border-radius: 9px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    color: #166534;
+}
+
+.sale-final-success strong {
+    font-size: 16px;
+}
+
+.sale-final-success small {
+    margin-top: 5px;
+    line-height: 1.4;
+}
 
 /* Catálogo */
 
@@ -313,17 +557,6 @@ body {
 
 .catalog-genre-dropdown {
     height: 46px;
-}
-
-.catalog-genre-dropdown .Select-control {
-    height: 46px;
-    border-radius: 8px;
-    border-color: #cbd5e1;
-}
-
-.catalog-genre-dropdown .Select-placeholder,
-.catalog-genre-dropdown .Select-value-label {
-    line-height: 44px;
 }
 
 .catalog-button {
@@ -465,7 +698,6 @@ body {
     font-weight: bold;
 }
 
-
 /* Previsões */
 
 .forecast-grid {
@@ -578,7 +810,6 @@ body {
     color: #166534;
 }
 
-
 /* Stock */
 
 .stock-grid {
@@ -672,14 +903,14 @@ body {
     color: #16a34a;
 }
 
-
 /* Responsividade */
 
 @media (max-width: 1150px) {
     .overview-charts,
     .overview-bottom,
     .forecast-grid,
-    .stock-grid {
+    .stock-grid,
+    .sale-layout {
         grid-template-columns: 1fr;
     }
 
@@ -707,7 +938,8 @@ body {
 
     .business-grid,
     .model-grid,
-    .result-grid {
+    .result-grid,
+    .sale-book-summary {
         grid-template-columns: 1fr;
     }
 

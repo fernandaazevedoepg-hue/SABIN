@@ -12,10 +12,24 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not DATABASE_URL:
     raise ValueError(
-        "DATABASE_URL não encontrada no ficheiro .env"
+        "DATABASE_URL não encontrada "
+        "no ficheiro .env"
     )
 
-engine = create_engine(DATABASE_URL)
+
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+)
+
+
+COLUNAS_ALERTAS = [
+    "periodo",
+    "nivel",
+    "tipo",
+    "mensagem",
+    "variacao_percent",
+]
 
 
 def carregar_metricas():
@@ -27,7 +41,13 @@ def carregar_metricas():
     with engine.connect() as connection:
         df = pd.read_sql(
             query,
-            connection
+            connection,
+        )
+
+    if df.empty:
+        raise ValueError(
+            "Não existem métricas "
+            "de previsão."
         )
 
     return df.iloc[0]
@@ -38,15 +58,24 @@ def carregar_previsoes():
         SELECT
             mes,
             receita_prevista
+
         FROM dw.previsao_receita
+
         WHERE tipo = 'Previsão'
+
         ORDER BY mes;
     """)
 
     with engine.connect() as connection:
         df = pd.read_sql(
             query,
-            connection
+            connection,
+        )
+
+    if df.empty:
+        raise ValueError(
+            "Não existem previsões "
+            "disponíveis."
         )
 
     df["mes"] = pd.to_datetime(
@@ -56,102 +85,143 @@ def carregar_previsoes():
     return df
 
 
-def gerar_alertas(metricas, previsoes):
+def gerar_alertas(
+    metricas,
+    previsoes,
+):
     alertas = []
 
     ultima_receita = float(
-        metricas["ultima_receita_real"]
+        metricas[
+            "ultima_receita_real"
+        ]
     )
 
     r2 = float(
         metricas["r2"]
     )
 
-    primeiro_mes = previsoes.iloc[0]
+    primeiro_mes = (
+        previsoes.iloc[0]
+    )
 
     receita_prevista = float(
-        primeiro_mes["receita_prevista"]
+        primeiro_mes[
+            "receita_prevista"
+        ]
     )
 
-    variacao = (
-        (
-            receita_prevista
-            - ultima_receita
+    if ultima_receita > 0:
+        variacao = (
+            (
+                receita_prevista
+                - ultima_receita
+            )
+            / ultima_receita
+            * 100
         )
-        / ultima_receita
-        * 100
-    )
+    else:
+        variacao = 0
 
     if variacao <= -20:
-        alertas.append({
-            "periodo": primeiro_mes["mes"],
-            "nivel": "Crítico",
-            "tipo": "Receita",
-            "mensagem":
-                "Previsão de queda acentuada "
-                "da receita no próximo mês.",
-            "variacao_percent": round(
-                variacao,
-                2
-            )
-        })
+        alertas.append(
+            {
+                "periodo": (
+                    primeiro_mes["mes"]
+                ),
+                "nivel": "Crítico",
+                "tipo": "Receita",
+                "mensagem": (
+                    "Previsão de queda "
+                    "acentuada da receita "
+                    "no próximo mês."
+                ),
+                "variacao_percent": round(
+                    variacao,
+                    2,
+                ),
+            }
+        )
 
     elif variacao < -5:
-        alertas.append({
-            "periodo": primeiro_mes["mes"],
-            "nivel": "Aviso",
-            "tipo": "Receita",
-            "mensagem":
-                "Previsão de redução da receita "
-                "no próximo mês.",
-            "variacao_percent": round(
-                variacao,
-                2
-            )
-        })
+        alertas.append(
+            {
+                "periodo": (
+                    primeiro_mes["mes"]
+                ),
+                "nivel": "Aviso",
+                "tipo": "Receita",
+                "mensagem": (
+                    "Previsão de redução "
+                    "da receita no próximo mês."
+                ),
+                "variacao_percent": round(
+                    variacao,
+                    2,
+                ),
+            }
+        )
 
     elif variacao >= 5:
-        alertas.append({
-            "periodo": primeiro_mes["mes"],
-            "nivel": "Positivo",
-            "tipo": "Receita",
-            "mensagem":
-                "Previsão de crescimento da receita "
-                "no próximo mês.",
-            "variacao_percent": round(
-                variacao,
-                2
-            )
-        })
+        alertas.append(
+            {
+                "periodo": (
+                    primeiro_mes["mes"]
+                ),
+                "nivel": "Positivo",
+                "tipo": "Receita",
+                "mensagem": (
+                    "Previsão de crescimento "
+                    "da receita no próximo mês."
+                ),
+                "variacao_percent": round(
+                    variacao,
+                    2,
+                ),
+            }
+        )
 
     if r2 < 0.60:
-        alertas.append({
-            "periodo": primeiro_mes["mes"],
-            "nivel": "Informação",
-            "tipo": "Modelo",
-            "mensagem":
-                "O modelo apresenta capacidade "
-                "explicativa moderada. "
-                "As previsões devem ser interpretadas "
-                "com cautela.",
-            "variacao_percent": None
-        })
+        alertas.append(
+            {
+                "periodo": (
+                    primeiro_mes["mes"]
+                ),
+                "nivel": "Informação",
+                "tipo": "Modelo",
+                "mensagem": (
+                    "O modelo apresenta "
+                    "capacidade explicativa "
+                    "moderada. As previsões "
+                    "devem ser interpretadas "
+                    "com cautela."
+                ),
+                "variacao_percent": None,
+            }
+        )
 
     for i in range(
         1,
-        len(previsoes)
+        len(previsoes),
     ):
         anterior = float(
-            previsoes.iloc[i - 1][
+            previsoes.iloc[
+                i - 1
+            ][
                 "receita_prevista"
             ]
         )
 
         atual = float(
-            previsoes.iloc[i][
+            previsoes.iloc[
+                i
+            ][
                 "receita_prevista"
             ]
         )
+
+        if anterior <= 0:
+            continue
 
         variacao_mes = (
             (
@@ -163,50 +233,67 @@ def gerar_alertas(metricas, previsoes):
         )
 
         if variacao_mes >= 5:
-            alertas.append({
-                "periodo":
-                    previsoes.iloc[i]["mes"],
-                "nivel": "Positivo",
-                "tipo": "Tendência",
-                "mensagem":
-                    "Previsão de recuperação "
-                    "da receita relativamente "
-                    "ao mês anterior.",
-                "variacao_percent": round(
-                    variacao_mes,
-                    2
-                )
-            })
+            alertas.append(
+                {
+                    "periodo": (
+                        previsoes.iloc[
+                            i
+                        ]["mes"]
+                    ),
+                    "nivel": "Positivo",
+                    "tipo": "Tendência",
+                    "mensagem": (
+                        "Previsão de recuperação "
+                        "da receita relativamente "
+                        "ao mês anterior."
+                    ),
+                    "variacao_percent": round(
+                        variacao_mes,
+                        2,
+                    ),
+                }
+            )
 
         elif variacao_mes <= -5:
-            alertas.append({
-                "periodo":
-                    previsoes.iloc[i]["mes"],
-                "nivel": "Aviso",
-                "tipo": "Tendência",
-                "mensagem":
-                    "Previsão de nova redução "
-                    "da receita relativamente "
-                    "ao mês anterior.",
-                "variacao_percent": round(
-                    variacao_mes,
-                    2
-                )
-            })
+            alertas.append(
+                {
+                    "periodo": (
+                        previsoes.iloc[
+                            i
+                        ]["mes"]
+                    ),
+                    "nivel": "Aviso",
+                    "tipo": "Tendência",
+                    "mensagem": (
+                        "Previsão de nova redução "
+                        "da receita relativamente "
+                        "ao mês anterior."
+                    ),
+                    "variacao_percent": round(
+                        variacao_mes,
+                        2,
+                    ),
+                }
+            )
 
-    return pd.DataFrame(alertas)
+    return pd.DataFrame(
+        alertas,
+        columns=COLUNAS_ALERTAS,
+    )
 
 
-def guardar_alertas(alertas):
+def guardar_alertas(
+    alertas
+):
     os.makedirs(
         "outputs",
-        exist_ok=True
+        exist_ok=True,
     )
 
     alertas.to_csv(
         "outputs/alertas_previsao.csv",
         index=False,
-        encoding="utf-8-sig"
+        encoding="utf-8-sig",
     )
 
     alertas.to_sql(
@@ -214,22 +301,28 @@ def guardar_alertas(alertas):
         engine,
         schema="dw",
         if_exists="replace",
-        index=False
+        index=False,
     )
 
 
 def main():
     print()
-    print("SABIN - ALERTAS PREDITIVOS")
+    print(
+        "SABIN - ALERTAS PREDITIVOS"
+    )
     print()
 
-    metricas = carregar_metricas()
+    metricas = (
+        carregar_metricas()
+    )
 
-    previsoes = carregar_previsoes()
+    previsoes = (
+        carregar_previsoes()
+    )
 
     alertas = gerar_alertas(
         metricas,
-        previsoes
+        previsoes,
     )
 
     guardar_alertas(
@@ -237,12 +330,15 @@ def main():
     )
 
     print(
-        f"Alertas gerados: {len(alertas)}"
+        f"Alertas gerados: "
+        f"{len(alertas)}"
     )
 
     print()
 
-    for _, alerta in alertas.iterrows():
+    for _, alerta in (
+        alertas.iterrows()
+    ):
         print(
             f"[{alerta['nivel']}] "
             f"{alerta['periodo'].strftime('%m/%Y')} - "
@@ -250,7 +346,9 @@ def main():
         )
 
         if pd.notna(
-            alerta["variacao_percent"]
+            alerta[
+                "variacao_percent"
+            ]
         ):
             print(
                 f"Variação: "
@@ -260,15 +358,18 @@ def main():
         print()
 
     print(
-        "Tabela criada:"
+        "Tabela atualizada:"
     )
+
     print(
         "dw.alertas_previsao"
     )
 
     print()
+
     print(
-        "Alertas gerados com sucesso."
+        "Alertas gerados "
+        "com sucesso."
     )
 
 
