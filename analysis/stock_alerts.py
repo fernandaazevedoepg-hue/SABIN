@@ -1,8 +1,7 @@
+import math
 import os
 
-import numpy as np
 import pandas as pd
-
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 
@@ -16,29 +15,33 @@ if not DATABASE_URL:
         "DATABASE_URL não encontrada no ficheiro .env"
     )
 
-engine = create_engine(DATABASE_URL)
+
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+)
+
+
+MESES_ANALISE = 3
+MESES_STOCK_ALVO = 3
 
 
 def obter_data_referencia():
     query = text("""
-        SELECT MAX(d.data) AS ultima_data
-        FROM dw.fact_vendas f
-        JOIN dw.dim_data d
-            ON d.data_key = f.data_key;
+        SELECT CURRENT_DATE AS data_referencia;
     """)
 
     with engine.connect() as connection:
-        resultado = pd.read_sql(
-            query,
-            connection
-        )
+        resultado = connection.execute(
+            query
+        ).mappings().one()
 
-    return pd.to_datetime(
-        resultado.iloc[0]["ultima_data"]
+    return pd.Timestamp(
+        resultado["data_referencia"]
     )
 
 
-def carregar_stock():
+def carregar_livros():
     query = text("""
         SELECT
             id AS livro_id,
@@ -52,68 +55,71 @@ def carregar_stock():
     """)
 
     with engine.connect() as connection:
-        df = pd.read_sql(
+        dados = pd.read_sql(
             query,
-            connection
+            connection,
         )
 
-    return df
+    return dados
 
 
-def carregar_vendas_recentes(
+def carregar_vendas_periodo(
     data_inicio,
-    data_fim
+    data_fim,
 ):
     query = text("""
         SELECT
             l.livro_id_origem AS livro_id,
-            SUM(f.quantidade) AS unidades_ultimos_3_meses
+            COALESCE(
+                SUM(f.quantidade),
+                0
+            ) AS unidades_vendidas
         FROM dw.fact_vendas f
-        JOIN dw.dim_data d
-            ON d.data_key = f.data_key
         JOIN dw.dim_livro l
             ON l.livro_key = f.livro_key
-        WHERE d.data >= :data_inicio
-          AND d.data < :data_fim
-        GROUP BY l.livro_id_origem;
+        JOIN dw.dim_data d
+            ON d.data_key = f.data_key
+        WHERE
+            d.data >= :data_inicio
+            AND d.data <= :data_fim
+        GROUP BY
+            l.livro_id_origem;
     """)
 
     with engine.connect() as connection:
-        df = pd.read_sql(
+        dados = pd.read_sql(
             query,
             connection,
             params={
-                "data_inicio": data_inicio,
-                "data_fim": data_fim
-            }
+                "data_inicio": data_inicio.date(),
+                "data_fim": data_fim.date(),
+            },
         )
 
-    return df
+    return dados
 
 
-def classificar_alerta(linha):
-    media = linha["media_mensal_vendas"]
-    cobertura = linha["meses_cobertura"]
-    stock = linha["stock_disponivel"]
+def calcular_nivel(
+    stock_disponivel,
+    media_mensal_vendas,
+    meses_cobertura,
+):
+    if stock_disponivel <= 1:
+        return "Crítico"
 
-    if media == 0:
+    if media_mensal_vendas <= 0:
         return "Sem procura recente"
 
-    if stock <= 0:
+    if meses_cobertura < 1:
         return "Crítico"
 
-    if cobertura < 1:
-        return "Crítico"
-
-    if cobertura < 2:
+    if meses_cobertura < 2:
         return "Atenção"
 
     return "Normal"
 
 
-def criar_recomendacao(linha):
-    nivel = linha["nivel"]
-
+def calcular_recomendacao(nivel):
     if nivel == "Crítico":
         return "Repor stock com prioridade"
 
@@ -121,134 +127,195 @@ def criar_recomendacao(linha):
         return "Planear reposição"
 
     if nivel == "Sem procura recente":
-        return "Sem reposição urgente"
+        return "Sem procura recente"
 
     return "Stock suficiente"
 
 
-def analisar_stock():
+def calcular_quantidade_recomendada(
+    stock_disponivel,
+    media_mensal_vendas,
+    nivel,
+):
+    if nivel == "Sem procura recente":
+        return 0
+
+    stock_alvo = (
+        media_mensal_vendas
+        * MESES_STOCK_ALVO
+    )
+
+    quantidade = max(
+        stock_alvo - stock_disponivel,
+        0,
+    )
+
+    return int(
+        math.ceil(quantidade)
+    )
+
+
+def gerar_alertas_stock():
     data_referencia = obter_data_referencia()
 
-    primeiro_dia_mes = (
-        data_referencia
-        .to_period("M")
-        .to_timestamp()
-    )
-
     data_inicio = (
-        primeiro_dia_mes
-        - pd.DateOffset(months=2)
+        data_referencia
+        - pd.DateOffset(
+            months=MESES_ANALISE
+        )
     )
 
-    data_fim = (
-        primeiro_dia_mes
-        + pd.DateOffset(months=1)
-    )
+    livros = carregar_livros()
 
-    stock = carregar_stock()
-
-    vendas = carregar_vendas_recentes(
+    vendas = carregar_vendas_periodo(
         data_inicio,
-        data_fim
+        data_referencia,
     )
 
-    dados = stock.merge(
+    dados = livros.merge(
         vendas,
         on="livro_id",
-        how="left"
+        how="left",
     )
 
     dados[
-        "unidades_ultimos_3_meses"
+        "unidades_vendidas"
     ] = (
-        dados["unidades_ultimos_3_meses"]
+        dados[
+            "unidades_vendidas"
+        ]
         .fillna(0)
         .astype(int)
     )
 
-    dados["stock_disponivel"] = (
-        dados["estoque_atual"]
-        - dados["qtd_reservada"]
-    ).clip(lower=0)
+    resultados = []
 
-    dados["media_mensal_vendas"] = (
-        dados["unidades_ultimos_3_meses"]
-        / 3
-    ).round(2)
-
-    dados["meses_cobertura"] = np.where(
-        dados["media_mensal_vendas"] > 0,
-        (
-            dados["stock_disponivel"]
-            / dados["media_mensal_vendas"]
-        ),
-        np.nan
-    )
-
-    dados["meses_cobertura"] = (
-        dados["meses_cobertura"]
-        .round(2)
-    )
-
-    # Objetivo de stock para cerca de 3 meses
-    dados["quantidade_recomendada"] = np.ceil(
-        (
-            dados["media_mensal_vendas"] * 3
+    for _, livro in dados.iterrows():
+        estoque_atual = int(
+            livro["estoque_atual"]
         )
-        - dados["stock_disponivel"]
-    ).clip(lower=0).astype(int)
 
-    dados["nivel"] = dados.apply(
-        classificar_alerta,
-        axis=1
+        qtd_reservada = int(
+            livro["qtd_reservada"]
+        )
+
+        stock_disponivel = max(
+            estoque_atual
+            - qtd_reservada,
+            0,
+        )
+
+        unidades = int(
+            livro[
+                "unidades_vendidas"
+            ]
+        )
+
+        media_mensal = (
+            unidades
+            / MESES_ANALISE
+        )
+
+        if media_mensal > 0:
+            meses_cobertura = (
+                stock_disponivel
+                / media_mensal
+            )
+        else:
+            meses_cobertura = None
+
+        nivel = calcular_nivel(
+            stock_disponivel,
+            media_mensal,
+            (
+                meses_cobertura
+                if meses_cobertura is not None
+                else float("inf")
+            ),
+        )
+
+        quantidade_recomendada = (
+            calcular_quantidade_recomendada(
+                stock_disponivel,
+                media_mensal,
+                nivel,
+            )
+        )
+
+        recomendacao = (
+            calcular_recomendacao(
+                nivel
+            )
+        )
+
+        resultados.append(
+            {
+                "data_referencia": (
+                    data_referencia.date()
+                ),
+                "livro_id": int(
+                    livro["livro_id"]
+                ),
+                "titulo": livro[
+                    "titulo"
+                ],
+                "isbn": livro[
+                    "isbn"
+                ],
+                "preco_venda": float(
+                    livro["preco_venda"]
+                ),
+                "estoque_atual": (
+                    estoque_atual
+                ),
+                "qtd_reservada": (
+                    qtd_reservada
+                ),
+                "stock_disponivel": (
+                    stock_disponivel
+                ),
+                "unidades_ultimos_3_meses": (
+                    unidades
+                ),
+                "media_mensal_vendas": round(
+                    media_mensal,
+                    2,
+                ),
+                "meses_cobertura": (
+                    round(
+                        meses_cobertura,
+                        2,
+                    )
+                    if meses_cobertura is not None
+                    else None
+                ),
+                "quantidade_recomendada": (
+                    quantidade_recomendada
+                ),
+                "nivel": nivel,
+                "recomendacao": (
+                    recomendacao
+                ),
+            }
+        )
+
+    return (
+        pd.DataFrame(resultados),
+        data_inicio,
+        data_referencia,
     )
 
-    dados["recomendacao"] = dados.apply(
-        criar_recomendacao,
-        axis=1
-    )
 
-    dados["data_referencia"] = (
-        data_referencia.date()
-    )
-
-    ordem = {
-        "Crítico": 1,
-        "Atenção": 2,
-        "Normal": 3,
-        "Sem procura recente": 4
-    }
-
-    dados["ordem"] = (
-        dados["nivel"]
-        .map(ordem)
-    )
-
-    dados = dados.sort_values(
-        [
-            "ordem",
-            "meses_cobertura"
-        ],
-        na_position="last"
-    )
-
-    dados = dados.drop(
-        columns=["ordem"]
-    )
-
-    return dados, data_inicio, data_referencia
-
-
-def guardar_resultados(dados):
+def guardar_alertas_stock(dados):
     os.makedirs(
         "outputs",
-        exist_ok=True
+        exist_ok=True,
     )
 
     dados.to_csv(
         "outputs/alertas_stock.csv",
         index=False,
-        encoding="utf-8-sig"
+        encoding="utf-8-sig",
     )
 
     dados.to_sql(
@@ -256,26 +323,58 @@ def guardar_resultados(dados):
         engine,
         schema="dw",
         if_exists="replace",
-        index=False
+        index=False,
     )
 
 
 def main():
     print()
-    print("SABIN - ALERTAS DE STOCK")
+    print(
+        "SABIN - ALERTAS DE STOCK"
+    )
     print()
 
-    dados, data_inicio, data_referencia = (
-        analisar_stock()
+    dados, data_inicio, data_fim = (
+        gerar_alertas_stock()
     )
 
-    guardar_resultados(dados)
+    guardar_alertas_stock(
+        dados
+    )
+
+    criticos = len(
+        dados[
+            dados["nivel"]
+            == "Crítico"
+        ]
+    )
+
+    atencao = len(
+        dados[
+            dados["nivel"]
+            == "Atenção"
+        ]
+    )
+
+    normais = len(
+        dados[
+            dados["nivel"]
+            == "Normal"
+        ]
+    )
+
+    sem_procura = len(
+        dados[
+            dados["nivel"]
+            == "Sem procura recente"
+        ]
+    )
 
     print(
-        f"Período analisado: "
+        "Período analisado: "
         f"{data_inicio.strftime('%m/%Y')} "
-        f"até "
-        f"{data_referencia.strftime('%m/%Y')}"
+        "até "
+        f"{data_fim.strftime('%m/%Y')}"
     )
 
     print()
@@ -285,82 +384,76 @@ def main():
     )
 
     print(
-        "Críticos:",
-        len(
-            dados[
-                dados["nivel"] == "Crítico"
-            ]
-        )
+        f"Críticos: {criticos}"
     )
 
     print(
-        "Atenção:",
-        len(
-            dados[
-                dados["nivel"] == "Atenção"
-            ]
-        )
+        f"Atenção: {atencao}"
     )
 
     print(
-        "Normais:",
-        len(
-            dados[
-                dados["nivel"] == "Normal"
-            ]
-        )
+        f"Normais: {normais}"
     )
 
     print(
-        "Sem procura recente:",
-        len(
-            dados[
-                dados["nivel"]
-                == "Sem procura recente"
-            ]
-        )
+        "Sem procura recente: "
+        f"{sem_procura}"
     )
 
     print()
-    print("LIVROS QUE NECESSITAM DE ATENÇÃO")
+    print(
+        "LIVROS QUE NECESSITAM "
+        "DE ATENÇÃO"
+    )
     print()
 
     alertas = dados[
         dados["nivel"].isin(
-            ["Crítico", "Atenção"]
+            [
+                "Crítico",
+                "Atenção",
+            ]
         )
     ]
 
     if alertas.empty:
         print(
-            "Nenhum alerta de stock encontrado."
+            "Nenhum alerta de stock "
+            "encontrado."
         )
-
     else:
-        for _, linha in alertas.iterrows():
+        for _, livro in (
+            alertas.iterrows()
+        ):
             print(
-                f"[{linha['nivel']}] "
-                f"{linha['titulo']}"
+                f"[{livro['nivel']}] "
+                f"{livro['titulo']}"
             )
 
             print(
-                f"Stock disponível: "
-                f"{linha['stock_disponivel']}"
+                "Stock disponível: "
+                f"{livro['stock_disponivel']}"
+            )
+
+            if pd.notna(
+                livro[
+                    "meses_cobertura"
+                ]
+            ):
+                print(
+                    "Cobertura: "
+                    f"{livro['meses_cobertura']:.2f} "
+                    "meses"
+                )
+
+            print(
+                "Quantidade recomendada: "
+                f"{livro['quantidade_recomendada']}"
             )
 
             print(
-                f"Média mensal: "
-                f"{linha['media_mensal_vendas']:.2f}"
-            )
-
-            print(
-                f"Meses de cobertura: "
-                f"{linha['meses_cobertura']:.2f}"
-            )
-
-            print(
-                f"Reposição recomendada: "
-                f"{linha['quantidade_recomendada']}"
+                f"Recomendação: "
+                f"{livro['recomendacao']}"
             )
 
             print()
@@ -368,6 +461,7 @@ def main():
     print(
         "Tabela criada:"
     )
+
     print(
         "dw.alertas_stock"
     )
@@ -377,6 +471,7 @@ def main():
     print(
         "Ficheiro criado:"
     )
+
     print(
         "outputs/alertas_stock.csv"
     )
@@ -384,7 +479,8 @@ def main():
     print()
 
     print(
-        "Análise de stock concluída com sucesso."
+        "Análise de stock concluída "
+        "com sucesso."
     )
 
 
