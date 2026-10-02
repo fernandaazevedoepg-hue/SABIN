@@ -113,15 +113,16 @@ def executar_atualizacao_analitica():
     }
 
 
-
 _estado_lock = threading.Lock()
 _atualizacao_em_execucao = False
 _atualizacao_pendente = False
+_versao_atualizacao = 0
 
 
 def _executar_em_background():
     global _atualizacao_em_execucao
     global _atualizacao_pendente
+    global _versao_atualizacao
 
     while True:
         try:
@@ -133,6 +134,8 @@ def _executar_em_background():
             )
 
         with _estado_lock:
+            _versao_atualizacao += 1
+
             if _atualizacao_pendente:
                 _atualizacao_pendente = False
                 continue
@@ -148,6 +151,7 @@ def solicitar_atualizacao_analitica():
     with _estado_lock:
         if _atualizacao_em_execucao:
             _atualizacao_pendente = True
+
             return {
                 "agendada": True,
                 "em_execucao": True,
@@ -165,6 +169,16 @@ def solicitar_atualizacao_analitica():
         "agendada": True,
         "em_execucao": False,
     }
+
+
+def obter_estado_atualizacao():
+    with _estado_lock:
+        return {
+            "em_execucao": _atualizacao_em_execucao,
+            "pendente": _atualizacao_pendente,
+            "versao": _versao_atualizacao,
+        }
+
 
 def main():
     print()

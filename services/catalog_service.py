@@ -137,20 +137,47 @@ def obter_livro_gestao(livro_id):
 
     query = text("""
         SELECT
-            id,
-            titulo,
-            isbn,
-            preco_venda,
-            estoque_atual,
-            qtd_reservada,
+            l.id,
+            l.titulo,
+            l.isbn,
+            l.preco_venda,
+            l.estoque_atual,
+            l.qtd_reservada,
             GREATEST(
-                estoque_atual - qtd_reservada,
+                l.estoque_atual - l.qtd_reservada,
                 0
             ) AS stock_disponivel,
-            editora,
-            data_publicacao
-        FROM public.livros
-        WHERE id = :livro_id;
+            l.editora,
+            l.data_publicacao,
+            COALESCE(
+                (
+                    SELECT STRING_AGG(
+                        a.nome,
+                        ', '
+                        ORDER BY a.nome
+                    )
+                    FROM public.livro_autores la
+                    JOIN public.autores a
+                        ON a.id = la.autor_id
+                    WHERE la.livro_id = l.id
+                ),
+                ''
+            ) AS autores_texto,
+            COALESCE(
+                (
+                    SELECT ARRAY_AGG(
+                        g.id
+                        ORDER BY g.nome
+                    )
+                    FROM public.livro_generos lg
+                    JOIN public.generos g
+                        ON g.id = lg.genero_id
+                    WHERE lg.livro_id = l.id
+                ),
+                ARRAY[]::integer[]
+            ) AS genero_ids
+        FROM public.livros l
+        WHERE l.id = :livro_id;
     """)
 
     with engine.connect() as connection:
@@ -190,6 +217,11 @@ def obter_livro_gestao(livro_id):
             if resultado["data_publicacao"]
             else None
         ),
+        "autores_texto": resultado["autores_texto"] or "",
+        "genero_ids": [
+            int(genero_id)
+            for genero_id in (resultado["genero_ids"] or [])
+        ],
     }
 
 
@@ -509,6 +541,16 @@ def adicionar_livro(
             "O ISBN deve ter 10 ou 13 caracteres válidos."
         )
 
+    if not autores:
+        raise ValueError(
+            "Indica pelo menos um autor."
+        )
+
+    if not genero_ids:
+        raise ValueError(
+            "Seleciona pelo menos um género."
+        )
+
     try:
         preco_venda = Decimal(
             str(preco_venda)
@@ -698,6 +740,196 @@ def adicionar_livro(
         "livro_id": livro_id,
         "titulo": livro["titulo"],
     }
+
+def atualizar_livro(
+    livro_id,
+    titulo,
+    isbn,
+    editora=None,
+    data_publicacao=None,
+    autores_texto=None,
+    genero_ids=None,
+):
+    if not livro_id:
+        raise ValueError(
+            "Seleciona um livro."
+        )
+
+    titulo = (titulo or "").strip()
+    isbn = re.sub(
+        r"[^0-9Xx]",
+        "",
+        str(isbn or ""),
+    ).upper()
+    editora = (
+        editora.strip()
+        if editora and editora.strip()
+        else None
+    )
+    autores = normalizar_nomes_autores(
+        autores_texto
+    )
+    genero_ids = genero_ids or []
+
+    if not titulo:
+        raise ValueError(
+            "Indica o título do livro."
+        )
+
+    if len(isbn) not in (10, 13):
+        raise ValueError(
+            "O ISBN deve ter 10 ou 13 caracteres válidos."
+        )
+
+    if not autores:
+        raise ValueError(
+            "Indica pelo menos um autor."
+        )
+
+    if not genero_ids:
+        raise ValueError(
+            "Seleciona pelo menos um género."
+        )
+
+    data_final = None
+
+    if data_publicacao:
+        try:
+            data_final = date.fromisoformat(
+                str(data_publicacao)
+            )
+        except ValueError:
+            raise ValueError(
+                "A data de publicação não é válida."
+            )
+
+    with engine.begin() as connection:
+        existente = (
+            connection.execute(
+                text("""
+                    SELECT id
+                    FROM public.livros
+                    WHERE REGEXP_REPLACE(
+                        UPPER(isbn),
+                        '[^0-9X]',
+                        '',
+                        'g'
+                    ) = :isbn
+                    AND id <> :livro_id
+                    LIMIT 1;
+                """),
+                {
+                    "isbn": isbn,
+                    "livro_id": int(livro_id),
+                },
+            )
+            .first()
+        )
+
+        if existente:
+            raise ValueError(
+                "Já existe outro livro com este ISBN."
+            )
+
+        atualizado = (
+            connection.execute(
+                text("""
+                    UPDATE public.livros
+                    SET
+                        titulo = :titulo,
+                        isbn = :isbn,
+                        editora = :editora,
+                        data_publicacao = :data_publicacao,
+                        atualizado_em = now()
+                    WHERE id = :livro_id
+                    RETURNING id, titulo;
+                """),
+                {
+                    "titulo": titulo,
+                    "isbn": isbn,
+                    "editora": editora,
+                    "data_publicacao": data_final,
+                    "livro_id": int(livro_id),
+                },
+            )
+            .mappings()
+            .first()
+        )
+
+        if not atualizado:
+            raise ValueError(
+                "Livro não encontrado."
+            )
+
+        connection.execute(
+            text("""
+                DELETE FROM public.livro_autores
+                WHERE livro_id = :livro_id;
+            """),
+            {
+                "livro_id": int(livro_id),
+            },
+        )
+
+        for nome_autor in autores:
+            autor_id = obter_ou_criar_autor(
+                connection,
+                nome_autor,
+            )
+
+            connection.execute(
+                text("""
+                    INSERT INTO public.livro_autores (
+                        livro_id,
+                        autor_id
+                    )
+                    VALUES (
+                        :livro_id,
+                        :autor_id
+                    )
+                    ON CONFLICT DO NOTHING;
+                """),
+                {
+                    "livro_id": int(livro_id),
+                    "autor_id": autor_id,
+                },
+            )
+
+        connection.execute(
+            text("""
+                DELETE FROM public.livro_generos
+                WHERE livro_id = :livro_id;
+            """),
+            {
+                "livro_id": int(livro_id),
+            },
+        )
+
+        for genero_id in genero_ids:
+            connection.execute(
+                text("""
+                    INSERT INTO public.livro_generos (
+                        livro_id,
+                        genero_id
+                    )
+                    VALUES (
+                        :livro_id,
+                        :genero_id
+                    )
+                    ON CONFLICT DO NOTHING;
+                """),
+                {
+                    "livro_id": int(livro_id),
+                    "genero_id": int(genero_id),
+                },
+            )
+
+    return {
+        "sucesso": True,
+        "livro_id": int(livro_id),
+        "titulo": atualizado["titulo"],
+    }
+
 
 def consultar_movimentos_stock(
     livro_id=None,

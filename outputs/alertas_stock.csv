@@ -1,6 +1,6 @@
 ﻿data_referencia,livro_id,titulo,isbn,preco_venda,estoque_atual,qtd_reservada,stock_disponivel,unidades_ultimos_3_meses,media_mensal_vendas,meses_cobertura,quantidade_recomendada,nivel,recomendacao
-2026-10-02,3,1984,9789720033062,15.9,155,0,155,10,3.33,46.5,0,Normal,Stock suficiente
-2026-10-02,12,A Coisa - Livro I,9789722535670,24.9,86,0,86,11,3.67,23.45,0,Normal,Stock suficiente
+2026-10-02,3,1984,9789720033062,15.9,154,0,154,11,3.67,42.0,0,Normal,Stock suficiente
+2026-10-02,12,A Coisa - Livro I,9789722535670,24.9,86,1,85,11,3.67,23.18,0,Normal,Stock suficiente
 2026-10-02,10,A Hora da Estrela,9789727086535,12.9,0,0,0,14,4.67,0.0,14,Crítico,Repor stock com prioridade
 2026-10-02,25,A Irmandade do Anel,9789897773921,24.9,123,0,123,6,2.0,61.5,0,Normal,Stock suficiente
 2026-10-02,18,A Metamorfose,9789720033154,9.9,33,0,33,6,2.0,16.5,0,Normal,Stock suficiente
@@ -8,20 +8,20 @@
 2026-10-02,16,Cem Anos de Solidão,9789722063883,20.9,75,0,75,18,6.0,12.5,0,Normal,Stock suficiente
 2026-10-02,26,Corte de espinhos e rosas,9789897545351,22.9,15,0,15,0,0.0,,0,Sem procura recente,Sem procura recente
 2026-10-02,9,Dom Casmurro,9789722024907,13.9,109,0,109,4,1.33,81.75,0,Normal,Stock suficiente
-2026-10-02,1,Ensaio sobre a Cegueira,9789720046833,16.9,81,0,81,14,4.67,17.36,0,Normal,Stock suficiente
+2026-10-02,1,Ensaio sobre a Cegueira,9789720046833,18.85,81,0,81,14,4.67,17.36,0,Normal,Stock suficiente
 2026-10-02,15,"Eu, Robô",9789897832024,16.9,61,0,61,4,1.33,45.75,0,Normal,Stock suficiente
 2026-10-02,14,Fundação,9789897731426,17.9,66,0,66,8,2.67,24.75,0,Normal,Stock suficiente
 2026-10-02,24,Harry Potter e a Câmara dos Segredos,9789722375054,21.9,156,0,156,11,3.67,42.55,0,Normal,Stock suficiente
 2026-10-02,8,Harry Potter e a Pedra Filosofal,9789722375047,21.9,166,0,166,4,1.33,124.5,0,Normal,Stock suficiente
-2026-10-02,2,Memorial do Convento,9789720046710,17.5,8,2,6,3,1.0,6.0,0,Normal,Stock suficiente
+2026-10-02,2,Memorial do Convento,9789720046710,17.5,4,0,4,7,2.33,1.71,3,Atenção,Planear reposição
 2026-10-02,6,Mensagem,9789720049759,11.0,107,0,107,16,5.33,20.06,0,Normal,Stock suficiente
-2026-10-02,17,O Alquimista,9789896877897,15.9,149,0,149,6,2.0,74.5,0,Normal,Stock suficiente
-2026-10-02,20,O Código Da Vinci,9789895870707,19.5,126,0,126,8,2.67,47.25,0,Normal,Stock suficiente
+2026-10-02,17,O Alquimista,9789896877897,15.9,147,0,147,8,2.67,55.12,0,Normal,Stock suficiente
+2026-10-02,20,O Código Da Vinci,9789895870707,19.5,125,0,125,9,3.0,41.67,0,Normal,Stock suficiente
 2026-10-02,7,O Hobbit,9789897776090,19.9,74,0,74,14,4.67,15.86,0,Normal,Stock suficiente
 2026-10-02,23,O Principezinho,9789720000033,12.5,75,0,75,5,1.67,45.0,0,Normal,Stock suficiente
 2026-10-02,19,Orgulho e Preconceito,9789720033116,14.5,79,0,79,9,3.0,26.33,0,Normal,Stock suficiente
 2026-10-02,22,Os Jogos da Fome,9789722366472,17.5,124,0,124,8,2.67,46.5,0,Normal,Stock suficiente
 2026-10-02,11,Os Maias,9789720727251,18.5,68,0,68,7,2.33,29.14,0,Normal,Stock suficiente
 2026-10-02,4,Rebelião na Quinta,9789897830617,12.5,92,0,92,11,3.67,25.09,0,Normal,Stock suficiente
-2026-10-02,13,The Shining,9789722541596,19.9,104,0,104,5,1.67,62.4,0,Normal,Stock suficiente
+2026-10-02,13,The Shining,9789722541596,19.9,103,0,103,6,2.0,51.5,0,Normal,Stock suficiente
 2026-10-02,5,Um Crime no Expresso do Oriente,9789892340692,14.9,47,0,47,10,3.33,14.1,0,Normal,Stock suficiente

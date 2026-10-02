@@ -1289,3 +1289,11 @@ body {
 .reservation-actions.single-action {
     grid-template-columns: 1fr;
 }
+
+.edit-book-panel {
+    margin-top: 20px;
+}
+
+.edit-book-panel .add-book-button {
+    margin-top: 18px;
+}
