@@ -1,5 +1,6 @@
 import os
 import re
+from datetime import date, timedelta
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -12,6 +13,7 @@ from dash import (
     Output,
     State,
     ctx,
+    no_update,
 )
 
 from dotenv import load_dotenv
@@ -25,7 +27,27 @@ from services.sales_service import (
     obter_livro,
     registar_venda,
 )
-from services.etl_service import executar_atualizacao_analitica
+from services.etl_service import solicitar_atualizacao_analitica
+from services.customer_service import adicionar_cliente
+from services.reservation_service import (
+    atualizar_status_reserva,
+    carregar_clientes_reserva,
+    carregar_livros_reserva,
+    carregar_reservas,
+    criar_reserva,
+    expirar_reservas,
+)
+from services.catalog_service import (
+    adicionar_livro,
+    alterar_preco,
+    carregar_autores_gestao,
+    carregar_generos_gestao,
+    carregar_livros_gestao,
+    consultar_historico_precos,
+    consultar_movimentos_stock,
+    obter_livro_gestao,
+    repor_stock,
+)
 
 
 load_dotenv()
@@ -361,6 +383,43 @@ def carregar_alertas_stock():
                 ELSE 4
             END,
             meses_cobertura;
+    """)
+
+    with engine.connect() as connection:
+        dados = pd.read_sql(
+            query,
+            connection,
+        )
+
+    return dados
+
+
+def carregar_stock_completo():
+    query = text("""
+        SELECT
+            l.id,
+            l.titulo,
+            l.isbn,
+            l.estoque_atual,
+            l.qtd_reservada,
+            GREATEST(
+                l.estoque_atual - l.qtd_reservada,
+                0
+            ) AS stock_disponivel,
+            a.media_mensal_vendas,
+            a.meses_cobertura,
+            a.nivel
+        FROM public.livros l
+        LEFT JOIN dw.alertas_stock a
+            ON a.livro_id = l.id
+        ORDER BY
+            CASE
+                WHEN a.nivel = 'Crítico' THEN 1
+                WHEN a.nivel = 'Atenção' THEN 2
+                WHEN a.nivel = 'Normal' THEN 3
+                ELSE 4
+            END,
+            l.titulo;
     """)
 
     with engine.connect() as connection:
@@ -1030,24 +1089,70 @@ def criar_sidebar():
                         className="menu-button active",
                     ),
                     html.Button(
-                        "Registar Venda",
-                        id="btn-venda",
-                        className="menu-button",
+                        children=[
+                            html.Span("Operações"),
+                            html.Span(
+                                "▾",
+                                id="operacoes-arrow",
+                                className="menu-arrow",
+                            ),
+                        ],
+                        id="toggle-operacoes",
+                        className="menu-section-button",
+                    ),
+                    html.Div(
+                        id="submenu-operacoes",
+                        className="submenu collapsed",
+                        children=[
+                            html.Button(
+                                "Registar Venda",
+                                id="btn-venda",
+                                className="submenu-button",
+                            ),
+                            html.Button(
+                                "Reservas",
+                                id="btn-reservas",
+                                className="submenu-button",
+                            ),
+                            html.Button(
+                                "Gestão de Catálogo",
+                                id="btn-gestao-catalogo",
+                                className="submenu-button",
+                            ),
+                        ],
                     ),
                     html.Button(
-                        "Catálogo",
-                        id="btn-catalogo",
-                        className="menu-button",
+                        children=[
+                            html.Span("Análises"),
+                            html.Span(
+                                "▾",
+                                id="analises-arrow",
+                                className="menu-arrow",
+                            ),
+                        ],
+                        id="toggle-analises",
+                        className="menu-section-button",
                     ),
-                    html.Button(
-                        "Previsões",
-                        id="btn-previsoes",
-                        className="menu-button",
-                    ),
-                    html.Button(
-                        "Stock e Reposição",
-                        id="btn-stock",
-                        className="menu-button",
+                    html.Div(
+                        id="submenu-analises",
+                        className="submenu collapsed",
+                        children=[
+                            html.Button(
+                                "Catálogo",
+                                id="btn-catalogo",
+                                className="submenu-button",
+                            ),
+                            html.Button(
+                                "Previsões",
+                                id="btn-previsoes",
+                                className="submenu-button",
+                            ),
+                            html.Button(
+                                "Stock e Reposição",
+                                id="btn-stock",
+                                className="submenu-button",
+                            ),
+                        ],
                     ),
                 ],
             ),
@@ -1334,19 +1439,22 @@ def pagina_visao_geral():
 
 # Página Registar Venda
 
-def pagina_registar_venda():
+def criar_opcoes_clientes_venda():
     clientes = carregar_clientes()
-    livros = carregar_livros_disponiveis()
 
-    opcoes_clientes = [
+    opcoes = [
         {
             "label": "Venda ao balcão — cliente não identificado",
             "value": "balcao",
-        }
+        },
+        {
+            "label": "+ Adicionar novo cliente",
+            "value": "novo_cliente",
+        },
     ]
 
     for cliente in clientes:
-        opcoes_clientes.append(
+        opcoes.append(
             {
                 "label": (
                     f"{cliente['nome_completo']} — "
@@ -1356,19 +1464,32 @@ def pagina_registar_venda():
             }
         )
 
-    opcoes_livros = []
+    return opcoes
+
+
+def criar_opcoes_livros_venda():
+    livros = carregar_livros_disponiveis()
+    opcoes = []
 
     for livro in livros:
-        opcoes_livros.append(
+        opcoes.append(
             {
                 "label": (
                     f"{livro['titulo']} — "
+                    f"ISBN {livro['isbn']} — "
                     f"{formatar_euro(livro['preco_venda'])} — "
                     f"{livro['stock_disponivel']} disponíveis"
                 ),
                 "value": livro["id"],
             }
         )
+
+    return opcoes
+
+
+def pagina_registar_venda():
+    opcoes_clientes = criar_opcoes_clientes_venda()
+    opcoes_livros = criar_opcoes_livros_venda()
 
     opcoes_pagamento = [
         {
@@ -1394,17 +1515,6 @@ def pagina_registar_venda():
                 ],
             ),
             html.Div(
-                className="sale-info-banner",
-                children=[
-                    html.Strong("Importante: "),
-                    html.Span(
-                        "a venda é gravada na base operacional. "
-                        "Os indicadores do Data Warehouse só mudam depois "
-                        "de executar novamente o processo ETL."
-                    ),
-                ],
-            ),
-            html.Div(
                 className="sale-layout",
                 children=[
                     html.Div(
@@ -1422,6 +1532,86 @@ def pagina_registar_venda():
                                 clearable=False,
                                 searchable=True,
                                 className="sale-dropdown",
+                            ),
+                            html.Div(
+                                id="sale-new-client-form",
+                                className="new-client-form hidden",
+                                children=[
+                                    html.H4("Novo Cliente"),
+                                    html.Div(
+                                        className="new-client-grid",
+                                        children=[
+                                            html.Div(
+                                                className="form-field span-2",
+                                                children=[
+                                                    html.Label(
+                                                        "Nome completo",
+                                                        className="form-label",
+                                                    ),
+                                                    dcc.Input(
+                                                        id="sale-new-client-name",
+                                                        type="text",
+                                                        placeholder="Nome completo",
+                                                        className="sale-number-input",
+                                                    ),
+                                                ],
+                                            ),
+                                            html.Div(
+                                                className="form-field",
+                                                children=[
+                                                    html.Label(
+                                                        "NIF",
+                                                        className="form-label",
+                                                    ),
+                                                    dcc.Input(
+                                                        id="sale-new-client-nif",
+                                                        type="text",
+                                                        placeholder="9 dígitos",
+                                                        className="sale-number-input",
+                                                    ),
+                                                ],
+                                            ),
+                                            html.Div(
+                                                className="form-field",
+                                                children=[
+                                                    html.Label(
+                                                        "Telemóvel",
+                                                        className="form-label",
+                                                    ),
+                                                    dcc.Input(
+                                                        id="sale-new-client-phone",
+                                                        type="text",
+                                                        placeholder="Opcional",
+                                                        className="sale-number-input",
+                                                    ),
+                                                ],
+                                            ),
+                                            html.Div(
+                                                className="form-field span-2",
+                                                children=[
+                                                    html.Label(
+                                                        "Email",
+                                                        className="form-label",
+                                                    ),
+                                                    dcc.Input(
+                                                        id="sale-new-client-email",
+                                                        type="email",
+                                                        placeholder="Opcional",
+                                                        className="sale-number-input",
+                                                    ),
+                                                ],
+                                            ),
+                                        ],
+                                    ),
+                                    html.Button(
+                                        "Guardar Cliente",
+                                        id="sale-new-client-submit",
+                                        className="primary-button new-client-submit",
+                                    ),
+                                    html.Div(
+                                        id="sale-new-client-message",
+                                    ),
+                                ],
                             ),
                             html.Label(
                                 "Livro",
@@ -1443,13 +1633,28 @@ def pagina_registar_venda():
                                 "Quantidade",
                                 className="form-label",
                             ),
-                            dcc.Input(
-                                id="sale-quantity",
-                                type="number",
-                                value=1,
-                                min=1,
-                                step=1,
-                                className="sale-number-input",
+                            html.Div(
+                                className="quantity-stepper",
+                                children=[
+                                    html.Button(
+                                        "−",
+                                        id="sale-quantity-minus",
+                                        className="stepper-button",
+                                        n_clicks=0,
+                                    ),
+                                    dcc.Input(
+                                        id="sale-quantity",
+                                        type="text",
+                                        value="1",
+                                        className="stepper-input",
+                                    ),
+                                    html.Button(
+                                        "+",
+                                        id="sale-quantity-plus",
+                                        className="stepper-button",
+                                        n_clicks=0,
+                                    ),
+                                ],
                             ),
                             html.Button(
                                 "Adicionar ao Carrinho",
@@ -1521,6 +1726,685 @@ def pagina_registar_venda():
                                 id="sale-final-message",
                             ),
                         ],
+                    ),
+                ],
+            ),
+        ]
+    )
+
+
+# Página Gestão de Catálogo
+
+def criar_tabela_movimentos_stock(movimentos):
+    if not movimentos:
+        return html.Div(
+            "Ainda não existem movimentos de stock para este livro.",
+            className="empty-cart",
+        )
+
+    linhas = []
+
+    for movimento in movimentos:
+        data = pd.to_datetime(
+            movimento["data_movimento"]
+        ).strftime("%d/%m/%Y %H:%M")
+
+        linhas.append(
+            html.Tr(
+                children=[
+                    html.Td(data),
+                    html.Td(movimento["tipo"]),
+                    html.Td(str(movimento["quantidade"])),
+                    html.Td(
+                        f"{movimento['stock_anterior']} → {movimento['stock_novo']}"
+                    ),
+                    html.Td(movimento["origem"]),
+                ]
+            )
+        )
+
+    return html.Table(
+        className="sale-cart-table",
+        children=[
+            html.Thead(
+                html.Tr(
+                    children=[
+                        html.Th("Data"),
+                        html.Th("Tipo"),
+                        html.Th("Qtd."),
+                        html.Th("Stock"),
+                        html.Th("Origem"),
+                    ]
+                )
+            ),
+            html.Tbody(linhas),
+        ],
+    )
+
+
+def criar_tabela_historico_precos(historico):
+    if not historico:
+        return html.Div(
+            "Ainda não existem alterações de preço para este livro.",
+            className="empty-cart",
+        )
+
+    linhas = []
+
+    for registo in historico:
+        data = pd.to_datetime(
+            registo["data_alteracao"]
+        ).strftime("%d/%m/%Y %H:%M")
+
+        linhas.append(
+            html.Tr(
+                children=[
+                    html.Td(data),
+                    html.Td(
+                        formatar_euro(
+                            registo["preco_anterior"]
+                        )
+                    ),
+                    html.Td(
+                        formatar_euro(
+                            registo["preco_novo"]
+                        )
+                    ),
+                ]
+            )
+        )
+
+    return html.Table(
+        className="sale-cart-table",
+        children=[
+            html.Thead(
+                html.Tr(
+                    children=[
+                        html.Th("Data"),
+                        html.Th("Preço anterior"),
+                        html.Th("Novo preço"),
+                    ]
+                )
+            ),
+            html.Tbody(linhas),
+        ],
+    )
+
+
+def pagina_gestao_catalogo():
+    livros = carregar_livros_gestao()
+    generos = carregar_generos_gestao()
+
+    opcoes_livros = [
+        {
+            "label": (
+                f"{livro['titulo']} — "
+                f"{livro['isbn']}"
+            ),
+            "value": livro["id"],
+        }
+        for livro in livros
+    ]
+
+    opcoes_generos = [
+        {
+            "label": genero["nome"],
+            "value": genero["id"],
+        }
+        for genero in generos
+    ]
+
+    return html.Div(
+        children=[
+            dcc.Store(
+                id="management-refresh-store",
+                data=0,
+            ),
+            html.Div(
+                className="page-header",
+                children=[
+                    html.H2("Gestão de Catálogo"),
+                    html.P(
+                        "Reposição de stock, atualização de preços e registo de novos livros"
+                    ),
+                ],
+            ),
+            html.Div(
+                className="sale-form-panel management-select-panel",
+                children=[
+                    html.H3("Selecionar Livro"),
+                    dcc.Dropdown(
+                        id="management-book",
+                        options=opcoes_livros,
+                        placeholder="Seleciona um livro...",
+                        clearable=True,
+                        searchable=True,
+                        className="sale-dropdown",
+                    ),
+                    html.Div(
+                        id="management-book-info",
+                        className="sale-book-info",
+                    ),
+                ],
+            ),
+            html.Div(
+                className="sale-layout",
+                children=[
+                    html.Div(
+                        className="sale-form-panel",
+                        children=[
+                            html.H3("Repor Stock"),
+                            html.P(
+                                "Adiciona unidades ao stock físico do livro.",
+                                className="form-help",
+                            ),
+                            html.Label(
+                                "Quantidade a adicionar",
+                                className="form-label",
+                            ),
+                            html.Div(
+                                className="quantity-stepper",
+                                children=[
+                                    html.Button(
+                                        "−",
+                                        id="management-stock-minus",
+                                        className="stepper-button",
+                                    ),
+                                    dcc.Input(
+                                        id="management-stock-quantity",
+                                        type="text",
+                                        value="1",
+                                        className="stepper-input",
+                                    ),
+                                    html.Button(
+                                        "+",
+                                        id="management-stock-plus",
+                                        className="stepper-button",
+                                    ),
+                                ],
+                            ),
+                            html.Label(
+                                "Observação",
+                                className="form-label",
+                            ),
+                            dcc.Textarea(
+                                id="management-stock-observation",
+                                placeholder="Ex.: Reposição do fornecedor",
+                                className="management-textarea",
+                            ),
+                            html.Button(
+                                "Confirmar Reposição",
+                                id="management-stock-submit",
+                                className="primary-button sale-submit-button",
+                            ),
+                            html.Div(
+                                id="management-stock-message",
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        className="sale-form-panel",
+                        children=[
+                            html.H3("Alterar Preço"),
+                            html.P(
+                                "Define o preço utilizado nas próximas vendas.",
+                                className="form-help",
+                            ),
+                            html.Label(
+                                "Novo preço (€)",
+                                className="form-label",
+                            ),
+                            dcc.Input(
+                                id="management-price-input",
+                                type="number",
+                                min=0.01,
+                                step=0.01,
+                                placeholder="Ex.: 13.90",
+                                className="sale-number-input clean-number-input",
+                            ),
+                            html.Button(
+                                "Atualizar Preço",
+                                id="management-price-submit",
+                                className="primary-button sale-submit-button",
+                            ),
+                            html.Div(
+                                id="management-price-message",
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+            html.Div(
+                className="sale-form-panel add-book-panel",
+                children=[
+                    html.Div(
+                        className="panel-heading-row",
+                        children=[
+                            html.Div(
+                                children=[
+                                    html.H3("Adicionar Novo Livro"),
+                                    html.P(
+                                        "Regista um novo título no catálogo da Bookmarked.",
+                                        className="form-help",
+                                    ),
+                                ]
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        className="book-form-grid",
+                        children=[
+                            html.Div(
+                                className="form-field span-2",
+                                children=[
+                                    html.Label(
+                                        "Título",
+                                        className="form-label",
+                                    ),
+                                    dcc.Input(
+                                        id="new-book-title",
+                                        type="text",
+                                        placeholder="Título do livro",
+                                        className="sale-number-input",
+                                    ),
+                                ],
+                            ),
+                            html.Div(
+                                className="form-field",
+                                children=[
+                                    html.Label(
+                                        "ISBN",
+                                        className="form-label",
+                                    ),
+                                    dcc.Input(
+                                        id="new-book-isbn",
+                                        type="text",
+                                        placeholder="ISBN-10 ou ISBN-13",
+                                        className="sale-number-input",
+                                    ),
+                                    html.Div(
+                                        id="new-book-api-message",
+                                    ),
+                                ],
+                            ),
+                            html.Div(
+                                className="form-field",
+                                children=[
+                                    html.Label(
+                                        "Preço (€)",
+                                        className="form-label",
+                                    ),
+                                    dcc.Input(
+                                        id="new-book-price",
+                                        type="number",
+                                        min=0.01,
+                                        step=0.01,
+                                        placeholder="Ex.: 17.50",
+                                        className="sale-number-input clean-number-input",
+                                    ),
+                                ],
+                            ),
+                            html.Div(
+                                className="form-field",
+                                children=[
+                                    html.Label(
+                                        "Stock inicial",
+                                        className="form-label",
+                                    ),
+                                    dcc.Input(
+                                        id="new-book-stock",
+                                        type="number",
+                                        value=0,
+                                        min=0,
+                                        step=1,
+                                        className="sale-number-input clean-number-input",
+                                    ),
+                                ],
+                            ),
+                            html.Div(
+                                className="form-field",
+                                children=[
+                                    html.Label(
+                                        "Editora",
+                                        className="form-label",
+                                    ),
+                                    dcc.Input(
+                                        id="new-book-publisher",
+                                        type="text",
+                                        placeholder="Editora",
+                                        className="sale-number-input",
+                                    ),
+                                ],
+                            ),
+                            html.Div(
+                                className="form-field",
+                                children=[
+                                    html.Label(
+                                        "Data de publicação",
+                                        className="form-label",
+                                    ),
+                                    dcc.DatePickerSingle(
+                                        id="new-book-date",
+                                        display_format="DD/MM/YYYY",
+                                        placeholder="Seleciona uma data",
+                                        className="book-date-picker",
+                                    ),
+                                ],
+                            ),
+                            html.Div(
+                                className="form-field span-2",
+                                children=[
+                                    html.Label(
+                                        "Autor(es)",
+                                        className="form-label",
+                                    ),
+                                    dcc.Input(
+                                        id="new-book-authors",
+                                        type="text",
+                                        placeholder="Ex.: José Saramago",
+                                        className="sale-number-input",
+                                    ),
+                                    html.P(
+                                        "Para vários autores, separa os nomes por vírgulas.",
+                                        className="form-help",
+                                    ),
+                                ],
+                            ),
+                            html.Div(
+                                className="form-field span-2",
+                                children=[
+                                    html.Label(
+                                        "Género(s)",
+                                        className="form-label",
+                                    ),
+                                    dcc.Dropdown(
+                                        id="new-book-genres",
+                                        options=opcoes_generos,
+                                        multi=True,
+                                        placeholder="Seleciona um ou mais géneros",
+                                        className="sale-dropdown",
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
+                    html.Button(
+                        "Adicionar Livro",
+                        id="management-add-book-submit",
+                        className="primary-button add-book-button",
+                    ),
+                    html.Div(
+                        id="management-add-message",
+                    ),
+                ],
+            ),
+            html.Div(
+                className="management-history-grid",
+                children=[
+                    html.Div(
+                        className="sale-form-panel",
+                        children=[
+                            html.H3("Movimentos de Stock"),
+                            html.Div(
+                                id="management-stock-history",
+                                children=html.Div(
+                                    "Seleciona um livro para consultar o histórico.",
+                                    className="empty-cart",
+                                ),
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        className="sale-form-panel",
+                        children=[
+                            html.H3("Histórico de Preços"),
+                            html.Div(
+                                id="management-price-history",
+                                children=html.Div(
+                                    "Seleciona um livro para consultar o histórico.",
+                                    className="empty-cart",
+                                ),
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ]
+    )
+
+
+# Página Reservas
+
+def criar_tabela_reservas(dados):
+    if not dados:
+        return html.Div(
+            "Ainda não existem reservas.",
+            className="empty-cart",
+        )
+
+    linhas = []
+
+    for reserva in dados:
+        linhas.append(
+            html.Tr(
+                children=[
+                    html.Td(str(reserva["id"])),
+                    html.Td(reserva["cliente"]),
+                    html.Td(reserva["livro"]),
+                    html.Td(str(reserva["quantidade"])),
+                    html.Td(
+                        reserva["data_limite"].strftime("%d/%m/%Y")
+                        if reserva["data_limite"]
+                        else "—"
+                    ),
+                    html.Td(reserva["status"]),
+                ]
+            )
+        )
+
+    return html.Div(
+        className="stock-table-wrapper",
+        children=[
+            html.Table(
+                className="stock-table",
+                children=[
+                    html.Thead(
+                        html.Tr(
+                            children=[
+                                html.Th("ID"),
+                                html.Th("Cliente"),
+                                html.Th("Livro"),
+                                html.Th("Qtd."),
+                                html.Th("Limite"),
+                                html.Th("Estado"),
+                            ]
+                        )
+                    ),
+                    html.Tbody(linhas),
+                ],
+            )
+        ],
+    )
+
+
+def pagina_reservas():
+    expirar_reservas()
+
+    clientes = carregar_clientes_reserva()
+    livros = carregar_livros_reserva()
+    reservas = carregar_reservas()
+
+    opcoes_clientes = [
+        {
+            "label": (
+                f"{cliente['nome_completo']} — NIF {cliente['nif']}"
+            ),
+            "value": cliente["id"],
+        }
+        for cliente in clientes
+    ]
+
+    opcoes_livros = [
+        {
+            "label": (
+                f"{livro['titulo']} — ISBN {livro['isbn']} — "
+                f"{livro['stock_disponivel']} disponíveis"
+            ),
+            "value": livro["id"],
+        }
+        for livro in livros
+        if int(livro["stock_disponivel"]) > 0
+    ]
+
+    pendentes = [
+        reserva
+        for reserva in reservas
+        if reserva["status"] == "Pendente"
+    ]
+
+    opcoes_pendentes = [
+        {
+            "label": (
+                f"#{reserva['id']} — {reserva['cliente']} — "
+                f"{reserva['livro']}"
+            ),
+            "value": reserva["id"],
+        }
+        for reserva in pendentes
+    ]
+
+    return html.Div(
+        children=[
+            dcc.Store(
+                id="reservation-refresh-store",
+                data=0,
+            ),
+            html.Div(
+                className="page-header",
+                children=[
+                    html.H2("Reservas"),
+                    html.P(
+                        "Criação e acompanhamento de reservas de livros"
+                    ),
+                ],
+            ),
+            html.Div(
+                className="sale-layout reservation-layout",
+                children=[
+                    html.Div(
+                        className="sale-form-panel",
+                        children=[
+                            html.H3("Nova Reserva"),
+                            html.Label(
+                                "Cliente",
+                                className="form-label",
+                            ),
+                            dcc.Dropdown(
+                                id="reservation-client",
+                                options=opcoes_clientes,
+                                placeholder="Seleciona um cliente...",
+                                searchable=True,
+                                className="sale-dropdown",
+                            ),
+                            html.Label(
+                                "Livro",
+                                className="form-label",
+                            ),
+                            dcc.Dropdown(
+                                id="reservation-book",
+                                options=opcoes_livros,
+                                placeholder="Seleciona um livro...",
+                                searchable=True,
+                                className="sale-dropdown",
+                            ),
+                            html.Label(
+                                "Quantidade",
+                                className="form-label",
+                            ),
+                            html.Div(
+                                className="quantity-stepper",
+                                children=[
+                                    html.Button(
+                                        "−",
+                                        id="reservation-quantity-minus",
+                                        className="stepper-button",
+                                        n_clicks=0,
+                                    ),
+                                    dcc.Input(
+                                        id="reservation-quantity",
+                                        type="text",
+                                        value="1",
+                                        className="stepper-input",
+                                    ),
+                                    html.Button(
+                                        "+",
+                                        id="reservation-quantity-plus",
+                                        className="stepper-button",
+                                        n_clicks=0,
+                                    ),
+                                ],
+                            ),
+                            html.Label(
+                                "Reservar até",
+                                className="form-label",
+                            ),
+                            dcc.DatePickerSingle(
+                                id="reservation-limit-date",
+                                min_date_allowed=date.today(),
+                                date=date.today() + timedelta(days=3),
+                                display_format="DD/MM/YYYY",
+                                className="book-date-picker",
+                            ),
+                            html.Button(
+                                "Criar Reserva",
+                                id="reservation-submit",
+                                className="primary-button sale-submit-button",
+                            ),
+                            html.Div(
+                                id="reservation-message",
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        className="sale-form-panel",
+                        children=[
+                            html.H3("Gerir Reserva"),
+                            html.Label(
+                                "Reserva pendente",
+                                className="form-label",
+                            ),
+                            dcc.Dropdown(
+                                id="reservation-active",
+                                options=opcoes_pendentes,
+                                placeholder="Seleciona uma reserva...",
+                                searchable=True,
+                                className="sale-dropdown",
+                            ),
+                            html.Div(
+                                className="reservation-actions single-action",
+                                children=[
+                                    html.Button(
+                                        "Cancelar Reserva",
+                                        id="reservation-cancel",
+                                        className="secondary-button",
+                                    ),
+                                ],
+                            ),
+                            html.P(
+                                "Quando o cliente levantar o livro, regista a venda normalmente em Registar Venda.",
+                                className="form-help",
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+            html.Div(
+                className="sale-form-panel reservation-table-panel",
+                children=[
+                    html.H3("Todas as Reservas"),
+                    html.Div(
+                        id="reservation-table-container",
+                        children=criar_tabela_reservas(reservas),
                     ),
                 ],
             ),
@@ -1808,10 +2692,97 @@ def pagina_previsoes():
 
 # Página Stock
 
-def pagina_stock():
-    dados = carregar_alertas_stock()
+def criar_tabela_stock_completo(dados):
+    if dados.empty:
+        return html.Div(
+            "Não existem livros no catálogo.",
+            className="empty-cart",
+        )
 
-    total_livros = len(dados)
+    classes_nivel = {
+        "Crítico": "stock-status critical",
+        "Atenção": "stock-status warning",
+        "Normal": "stock-status normal",
+        "Sem procura recente": "stock-status neutral",
+    }
+
+    linhas = []
+
+    for _, livro in dados.iterrows():
+        nivel = (
+            livro["nivel"]
+            if pd.notna(livro["nivel"])
+            else "Sem análise"
+        )
+
+        cobertura = (
+            f"{float(livro['meses_cobertura']):.2f}"
+            .replace(".", ",")
+            if pd.notna(livro["meses_cobertura"])
+            else "—"
+        )
+
+        media = (
+            f"{float(livro['media_mensal_vendas']):.2f}"
+            .replace(".", ",")
+            if pd.notna(livro["media_mensal_vendas"])
+            else "—"
+        )
+
+        linhas.append(
+            html.Tr(
+                children=[
+                    html.Td(livro["titulo"]),
+                    html.Td(str(int(livro["estoque_atual"]))),
+                    html.Td(str(int(livro["qtd_reservada"]))),
+                    html.Td(str(int(livro["stock_disponivel"]))),
+                    html.Td(media),
+                    html.Td(cobertura),
+                    html.Td(
+                        html.Span(
+                            nivel,
+                            className=classes_nivel.get(
+                                nivel,
+                                "stock-status neutral",
+                            ),
+                        )
+                    ),
+                ]
+            )
+        )
+
+    return html.Div(
+        className="stock-table-wrapper",
+        children=[
+            html.Table(
+                className="stock-table stock-all-table",
+                children=[
+                    html.Thead(
+                        html.Tr(
+                            children=[
+                                html.Th("Livro"),
+                                html.Th("Stock físico"),
+                                html.Th("Reservado"),
+                                html.Th("Disponível"),
+                                html.Th("Média mensal"),
+                                html.Th("Cobertura"),
+                                html.Th("Estado"),
+                            ]
+                        )
+                    ),
+                    html.Tbody(linhas),
+                ],
+            )
+        ],
+    )
+
+
+def pagina_stock():
+    expirar_reservas()
+    dados = carregar_alertas_stock()
+    stock_completo = carregar_stock_completo()
+
+    total_livros = len(stock_completo)
 
     criticos = len(
         dados[
@@ -1840,7 +2811,7 @@ def pagina_stock():
                 children=[
                     html.H2("Stock e Reposição"),
                     html.P(
-                        "Monitorização da cobertura de stock e identificação de necessidades de reposição"
+                        "Monitorização do stock disponível e das necessidades de reposição"
                     ),
                 ],
             ),
@@ -1932,7 +2903,7 @@ def pagina_stock():
                                                 className="criteria-critical",
                                             ),
                                             html.Strong(
-                                                "Menos de 1 mês de cobertura"
+                                                "1 unidade disponível ou cobertura inferior a 1 mês"
                                             ),
                                         ],
                                     ),
@@ -1966,6 +2937,28 @@ def pagina_stock():
                     ),
                 ],
             ),
+            html.Div(
+                className="stock-alert-panel stock-all-panel",
+                children=[
+                    html.Div(
+                        className="panel-heading-row",
+                        children=[
+                            html.Div(
+                                children=[
+                                    html.H3("Stock de Todos os Livros"),
+                                    html.P(
+                                        "O stock físico inclui as unidades reservadas. O disponível corresponde ao que pode ser vendido de imediato.",
+                                        className="form-help",
+                                    ),
+                                ]
+                            ),
+                        ],
+                    ),
+                    criar_tabela_stock_completo(
+                        stock_completo
+                    ),
+                ],
+            ),
         ]
     )
 
@@ -1993,17 +2986,127 @@ app.layout = html.Div(
 )
 
 
+# Controlos de quantidade executados no navegador para resposta imediata
+
+_STEPPER_JS = """
+function(menos, mais, valorAtual) {
+    const contexto = dash_clientside.callback_context;
+    let id = null;
+
+    if (contexto.triggered && contexto.triggered.length > 0) {
+        id = contexto.triggered[0].prop_id.split('.')[0];
+    }
+
+    let valor = parseInt(valorAtual || '1', 10);
+
+    if (Number.isNaN(valor) || valor < 1) {
+        valor = 1;
+    }
+
+    if (id && id.endsWith('-minus')) {
+        valor = Math.max(1, valor - 1);
+    }
+
+    if (id && id.endsWith('-plus')) {
+        valor = valor + 1;
+    }
+
+    return String(valor);
+}
+"""
+
+
+app.clientside_callback(
+    _STEPPER_JS,
+    Output("sale-quantity", "value"),
+    Input("sale-quantity-minus", "n_clicks"),
+    Input("sale-quantity-plus", "n_clicks"),
+    State("sale-quantity", "value"),
+    prevent_initial_call=True,
+)
+
+
+app.clientside_callback(
+    _STEPPER_JS,
+    Output("management-stock-quantity", "value"),
+    Input("management-stock-minus", "n_clicks"),
+    Input("management-stock-plus", "n_clicks"),
+    State("management-stock-quantity", "value"),
+    prevent_initial_call=True,
+)
+
+
+app.clientside_callback(
+    _STEPPER_JS,
+    Output("reservation-quantity", "value"),
+    Input("reservation-quantity-minus", "n_clicks"),
+    Input("reservation-quantity-plus", "n_clicks"),
+    State("reservation-quantity", "value"),
+    prevent_initial_call=True,
+)
+
+
 # Navegação
+
+@app.callback(
+    Output("submenu-operacoes", "className"),
+    Output("operacoes-arrow", "children"),
+    Input("toggle-operacoes", "n_clicks"),
+    State("submenu-operacoes", "className"),
+    prevent_initial_call=True,
+)
+def alternar_menu_operacoes(
+    n_clicks,
+    classe_atual,
+):
+    if classe_atual == "submenu":
+        return (
+            "submenu collapsed",
+            "▾",
+        )
+
+    return (
+        "submenu",
+        "▴",
+    )
+
+
+@app.callback(
+    Output("submenu-analises", "className"),
+    Output("analises-arrow", "children"),
+    Input("toggle-analises", "n_clicks"),
+    State("submenu-analises", "className"),
+    prevent_initial_call=True,
+)
+def alternar_menu_analises(
+    n_clicks,
+    classe_atual,
+):
+    if classe_atual == "submenu":
+        return (
+            "submenu collapsed",
+            "▾",
+        )
+
+    return (
+        "submenu",
+        "▴",
+    )
+
 
 @app.callback(
     Output("page-content", "children"),
     Output("btn-visao-geral", "className"),
     Output("btn-venda", "className"),
+    Output("btn-reservas", "className"),
+    Output("btn-gestao-catalogo", "className"),
     Output("btn-catalogo", "className"),
     Output("btn-previsoes", "className"),
     Output("btn-stock", "className"),
     Input("btn-visao-geral", "n_clicks"),
     Input("btn-venda", "n_clicks"),
+    Input("btn-reservas", "n_clicks"),
+    Input("btn-gestao-catalogo", "n_clicks"),
     Input("btn-catalogo", "n_clicks"),
     Input("btn-previsoes", "n_clicks"),
     Input("btn-stock", "n_clicks"),
@@ -2011,62 +3114,735 @@ app.layout = html.Div(
 def navegar(
     visao,
     venda,
+    reservas,
+    gestao_catalogo,
     catalogo,
     previsoes,
     stock,
 ):
     botao = ctx.triggered_id
 
-    normal = "menu-button"
-    ativo = "menu-button active"
+    visao_normal = "menu-button"
+    visao_ativo = "menu-button active"
+    submenu_normal = "submenu-button"
+    submenu_ativo = "submenu-button active"
 
     if botao == "btn-venda":
         return (
             pagina_registar_venda(),
-            normal,
-            ativo,
-            normal,
-            normal,
-            normal,
+            visao_normal,
+            submenu_ativo,
+            submenu_normal,
+            submenu_normal,
+            submenu_normal,
+            submenu_normal,
+            submenu_normal,
+        )
+
+    if botao == "btn-reservas":
+        return (
+            pagina_reservas(),
+            visao_normal,
+            submenu_normal,
+            submenu_ativo,
+            submenu_normal,
+            submenu_normal,
+            submenu_normal,
+            submenu_normal,
+        )
+
+    if botao == "btn-gestao-catalogo":
+        return (
+            pagina_gestao_catalogo(),
+            visao_normal,
+            submenu_normal,
+            submenu_normal,
+            submenu_ativo,
+            submenu_normal,
+            submenu_normal,
+            submenu_normal,
         )
 
     if botao == "btn-catalogo":
         return (
             pagina_catalogo(),
-            normal,
-            normal,
-            ativo,
-            normal,
-            normal,
+            visao_normal,
+            submenu_normal,
+            submenu_normal,
+            submenu_normal,
+            submenu_ativo,
+            submenu_normal,
+            submenu_normal,
         )
 
     if botao == "btn-previsoes":
         return (
             pagina_previsoes(),
-            normal,
-            normal,
-            normal,
-            ativo,
-            normal,
+            visao_normal,
+            submenu_normal,
+            submenu_normal,
+            submenu_normal,
+            submenu_normal,
+            submenu_ativo,
+            submenu_normal,
         )
 
     if botao == "btn-stock":
         return (
             pagina_stock(),
-            normal,
-            normal,
-            normal,
-            normal,
-            ativo,
+            visao_normal,
+            submenu_normal,
+            submenu_normal,
+            submenu_normal,
+            submenu_normal,
+            submenu_normal,
+            submenu_ativo,
         )
 
     return (
         pagina_visao_geral(),
-        ativo,
-        normal,
-        normal,
-        normal,
-        normal,
+        visao_ativo,
+        submenu_normal,
+        submenu_normal,
+        submenu_normal,
+        submenu_normal,
+        submenu_normal,
+        submenu_normal,
+    )
+
+
+# Quantidade da venda
+
+@app.callback(
+    Output("reservation-message", "children"),
+    Output("reservation-refresh-store", "data"),
+    Input("reservation-submit", "n_clicks"),
+    Input("reservation-cancel", "n_clicks"),
+    State("reservation-client", "value"),
+    State("reservation-book", "value"),
+    State("reservation-quantity", "value"),
+    State("reservation-limit-date", "date"),
+    State("reservation-active", "value"),
+    State("reservation-refresh-store", "data"),
+    prevent_initial_call=True,
+)
+def gerir_reserva(
+    criar_click,
+    cancelar_click,
+    cliente_id,
+    livro_id,
+    quantidade,
+    data_limite,
+    reserva_id,
+    refresh,
+):
+    acao = ctx.triggered_id
+    refresh = int(refresh or 0)
+
+    try:
+        if acao == "reservation-submit":
+            criar_reserva(
+                cliente_id,
+                livro_id,
+                quantidade,
+                data_limite,
+            )
+            mensagem = "Reserva criada com sucesso."
+
+        elif acao == "reservation-cancel":
+            if not reserva_id:
+                raise ValueError(
+                    "Seleciona uma reserva pendente."
+                )
+
+            atualizar_status_reserva(
+                reserva_id,
+                "Cancelada",
+            )
+            mensagem = "Reserva cancelada com sucesso."
+
+        else:
+            return "", refresh
+
+    except ValueError as erro:
+        return (
+            html.Div(
+                str(erro),
+                className="sale-error-message",
+            ),
+            refresh,
+        )
+    except Exception as erro:
+        print("Erro ao gerir reserva:", erro)
+        return (
+            html.Div(
+                "Não foi possível concluir a operação.",
+                className="sale-error-message",
+            ),
+            refresh,
+        )
+
+    solicitar_atualizacao_analitica()
+
+    return (
+        html.Div(
+            mensagem,
+            className="sale-success-message",
+        ),
+        refresh + 1,
+    )
+
+
+@app.callback(
+    Output("reservation-client", "options"),
+    Output("reservation-book", "options"),
+    Output("reservation-active", "options"),
+    Output("reservation-table-container", "children"),
+    Input("reservation-refresh-store", "data"),
+)
+def atualizar_pagina_reservas(refresh):
+    reservas = carregar_reservas()
+    clientes = carregar_clientes_reserva()
+    livros = carregar_livros_reserva()
+
+    opcoes_clientes = [
+        {
+            "label": f"{c['nome_completo']} — NIF {c['nif']}",
+            "value": c["id"],
+        }
+        for c in clientes
+    ]
+
+    opcoes_livros = [
+        {
+            "label": (
+                f"{l['titulo']} — ISBN {l['isbn']} — "
+                f"{l['stock_disponivel']} disponíveis"
+            ),
+            "value": l["id"],
+        }
+        for l in livros
+        if int(l["stock_disponivel"]) > 0
+    ]
+
+    opcoes_pendentes = [
+        {
+            "label": (
+                f"#{r['id']} — {r['cliente']} — {r['livro']}"
+            ),
+            "value": r["id"],
+        }
+        for r in reservas
+        if r["status"] == "Pendente"
+    ]
+
+    return (
+        opcoes_clientes,
+        opcoes_livros,
+        opcoes_pendentes,
+        criar_tabela_reservas(reservas),
+    )
+
+
+def normalizar_data_api(valor):
+    if not valor:
+        return None
+
+    texto = str(valor).strip()
+
+    if re.fullmatch(r"\d{4}", texto):
+        return f"{texto}-01-01"
+
+    data_convertida = pd.to_datetime(
+        texto,
+        errors="coerce",
+    )
+
+    if pd.isna(data_convertida):
+        return None
+
+    return data_convertida.strftime("%Y-%m-%d")
+
+
+@app.callback(
+    Output("new-book-title", "value"),
+    Output("new-book-authors", "value"),
+    Output("new-book-publisher", "value"),
+    Output("new-book-date", "date"),
+    Output("new-book-api-message", "children"),
+    Input("new-book-isbn", "value"),
+    prevent_initial_call=True,
+)
+def preencher_novo_livro_por_isbn(isbn):
+    isbn_limpo = re.sub(
+        r"[^0-9Xx]",
+        "",
+        str(isbn or ""),
+    ).upper()
+
+    if len(isbn_limpo) not in (10, 13):
+        return (
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            "",
+        )
+
+    try:
+        resultado = procurar_livro(
+            isbn_limpo
+        )
+    except Exception as erro:
+        print("Erro ao consultar ISBN:", erro)
+        return (
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            html.Div(
+                "Não foi possível consultar o ISBN agora. Podes preencher os dados manualmente.",
+                className="sale-neutral-message compact-message",
+            ),
+        )
+
+    if not resultado.get("sucesso"):
+        return (
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            html.Div(
+                "ISBN não encontrado. Podes preencher os dados manualmente.",
+                className="sale-neutral-message compact-message",
+            ),
+        )
+
+    origem = resultado.get("origem")
+
+    if origem != "Open Library API":
+        return (
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            html.Div(
+                "Este ISBN já existe no catálogo.",
+                className="sale-error-message compact-message",
+            ),
+        )
+
+    autores = resultado.get("autores") or []
+
+    if isinstance(autores, str):
+        autores_texto = autores
+    else:
+        autores_texto = ", ".join(
+            str(autor)
+            for autor in autores
+            if autor
+        )
+
+    return (
+        resultado.get("titulo") or no_update,
+        autores_texto or no_update,
+        resultado.get("editora") or no_update,
+        normalizar_data_api(
+            resultado.get("data_publicacao")
+        ) or no_update,
+        html.Div(
+            "Dados encontrados e preenchidos automaticamente.",
+            className="sale-success-message compact-message",
+        ),
+    )
+
+
+# Gestão de Catálogo
+
+@app.callback(
+    Output("management-book", "options"),
+    Input("management-refresh-store", "data"),
+)
+def atualizar_opcoes_livros_gestao(refresh):
+    livros = carregar_livros_gestao()
+
+    return [
+        {
+            "label": (
+                f"{livro['titulo']} — "
+                f"{livro['isbn']}"
+            ),
+            "value": livro["id"],
+        }
+        for livro in livros
+    ]
+
+
+@app.callback(
+    Output("management-book-info", "children"),
+    Output("management-stock-history", "children"),
+    Output("management-price-history", "children"),
+    Input("management-book", "value"),
+    Input("management-refresh-store", "data"),
+)
+def atualizar_gestao_catalogo(
+    livro_id,
+    refresh,
+):
+    if not livro_id:
+        vazio_stock = html.Div(
+            "Seleciona um livro para consultar o histórico.",
+            className="empty-cart",
+        )
+
+        vazio_preco = html.Div(
+            "Seleciona um livro para consultar o histórico.",
+            className="empty-cart",
+        )
+
+        return (
+            "",
+            vazio_stock,
+            vazio_preco,
+        )
+
+    livro = obter_livro_gestao(
+        livro_id
+    )
+
+    if not livro:
+        erro = html.Div(
+            "Livro não encontrado.",
+            className="sale-error-message",
+        )
+
+        return (
+            erro,
+            "",
+            "",
+        )
+
+    info = html.Div(
+        children=[
+            html.Div(
+                className="sale-book-summary management-summary",
+                children=[
+                    html.Div(
+                        children=[
+                            html.Span("Preço atual"),
+                            html.Strong(
+                                formatar_euro(
+                                    livro["preco_venda"]
+                                )
+                            ),
+                        ]
+                    ),
+                    html.Div(
+                        children=[
+                            html.Span("Stock físico"),
+                            html.Strong(
+                                str(livro["estoque_atual"])
+                            ),
+                        ]
+                    ),
+                    html.Div(
+                        children=[
+                            html.Span("Reservado"),
+                            html.Strong(
+                                str(livro["qtd_reservada"])
+                            ),
+                        ]
+                    ),
+                    html.Div(
+                        children=[
+                            html.Span("Disponível p/ venda"),
+                            html.Strong(
+                                str(livro["stock_disponivel"])
+                            ),
+                        ]
+                    ),
+                    html.Div(
+                        children=[
+                            html.Span("ISBN"),
+                            html.Strong(livro["isbn"]),
+                        ]
+                    ),
+                    html.Div(
+                        children=[
+                            html.Span("Editora"),
+                            html.Strong(
+                                livro["editora"] or "—"
+                            ),
+                        ]
+                    ),
+                ],
+            ),
+            html.P(
+                "Disponível para venda = stock físico − unidades reservadas.",
+                className="stock-explanation",
+            ),
+        ]
+    )
+
+    movimentos = consultar_movimentos_stock(
+        livro_id,
+        limite=10,
+    )
+
+    historico = consultar_historico_precos(
+        livro_id,
+        limite=10,
+    )
+
+    return (
+        info,
+        criar_tabela_movimentos_stock(
+            movimentos
+        ),
+        criar_tabela_historico_precos(
+            historico
+        ),
+    )
+
+
+@app.callback(
+    Output("management-stock-message", "children"),
+    Output("management-price-message", "children"),
+    Output("management-add-message", "children"),
+    Output("management-refresh-store", "data"),
+    Output("management-book", "value"),
+    Input("management-stock-submit", "n_clicks"),
+    Input("management-price-submit", "n_clicks"),
+    Input("management-add-book-submit", "n_clicks"),
+    State("management-book", "value"),
+    State("management-stock-quantity", "value"),
+    State("management-stock-observation", "value"),
+    State("management-price-input", "value"),
+    State("new-book-title", "value"),
+    State("new-book-isbn", "value"),
+    State("new-book-price", "value"),
+    State("new-book-stock", "value"),
+    State("new-book-publisher", "value"),
+    State("new-book-date", "date"),
+    State("new-book-authors", "value"),
+    State("new-book-genres", "value"),
+    State("management-refresh-store", "data"),
+    prevent_initial_call=True,
+)
+def gerir_catalogo_operacional(
+    repor,
+    atualizar_preco_click,
+    adicionar_click,
+    livro_id,
+    quantidade,
+    observacao,
+    novo_preco,
+    novo_titulo,
+    novo_isbn,
+    novo_livro_preco,
+    novo_stock,
+    nova_editora,
+    nova_data,
+    novos_autores,
+    novos_generos,
+    refresh,
+):
+    acao = ctx.triggered_id
+    refresh = int(refresh or 0)
+
+    if acao == "management-stock-submit":
+        if not livro_id:
+            return (
+                html.Div(
+                    "Seleciona primeiro um livro.",
+                    className="sale-error-message",
+                ),
+                "",
+                "",
+                refresh,
+                livro_id,
+            )
+
+        try:
+            repor_stock(
+                livro_id,
+                quantidade,
+                observacao,
+            )
+        except ValueError as erro:
+            return (
+                html.Div(
+                    str(erro),
+                    className="sale-error-message",
+                ),
+                "",
+                "",
+                refresh,
+                livro_id,
+            )
+        except Exception as erro:
+            print(
+                "Erro ao repor stock:",
+                erro,
+            )
+            return (
+                html.Div(
+                    "Não foi possível repor o stock.",
+                    className="sale-error-message",
+                ),
+                "",
+                "",
+                refresh,
+                livro_id,
+            )
+
+        try:
+            solicitar_atualizacao_analitica()
+        except Exception as erro:
+            print(
+                "Erro ao atualizar análises após reposição:",
+                erro,
+            )
+
+        return (
+            html.Div(
+                "Stock reposto com sucesso.",
+                className="sale-success-message",
+            ),
+            "",
+            "",
+            refresh + 1,
+            livro_id,
+        )
+
+    if acao == "management-price-submit":
+        if not livro_id:
+            return (
+                "",
+                html.Div(
+                    "Seleciona primeiro um livro.",
+                    className="sale-error-message",
+                ),
+                "",
+                refresh,
+                livro_id,
+            )
+
+        try:
+            alterar_preco(
+                livro_id,
+                novo_preco,
+            )
+        except ValueError as erro:
+            return (
+                "",
+                html.Div(
+                    str(erro),
+                    className="sale-error-message",
+                ),
+                "",
+                refresh,
+                livro_id,
+            )
+        except Exception as erro:
+            print(
+                "Erro ao alterar preço:",
+                erro,
+            )
+            return (
+                "",
+                html.Div(
+                    "Não foi possível alterar o preço.",
+                    className="sale-error-message",
+                ),
+                "",
+                refresh,
+                livro_id,
+            )
+
+        try:
+            solicitar_atualizacao_analitica()
+        except Exception as erro:
+            print(
+                "Erro ao atualizar análises após alteração de preço:",
+                erro,
+            )
+
+        return (
+            "",
+            html.Div(
+                "Preço atualizado com sucesso.",
+                className="sale-success-message",
+            ),
+            "",
+            refresh + 1,
+            livro_id,
+        )
+
+    if acao == "management-add-book-submit":
+        try:
+            resultado = adicionar_livro(
+                titulo=novo_titulo,
+                isbn=novo_isbn,
+                preco_venda=novo_livro_preco,
+                estoque_inicial=novo_stock,
+                editora=nova_editora,
+                data_publicacao=nova_data,
+                autores_texto=novos_autores,
+                genero_ids=novos_generos,
+            )
+        except ValueError as erro:
+            return (
+                "",
+                "",
+                html.Div(
+                    str(erro),
+                    className="sale-error-message",
+                ),
+                refresh,
+                livro_id,
+            )
+        except Exception as erro:
+            print(
+                "Erro ao adicionar livro:",
+                erro,
+            )
+            return (
+                "",
+                "",
+                html.Div(
+                    "Não foi possível adicionar o livro.",
+                    className="sale-error-message",
+                ),
+                refresh,
+                livro_id,
+            )
+
+        try:
+            solicitar_atualizacao_analitica()
+        except Exception as erro:
+            print(
+                "Erro ao atualizar análises após adicionar livro:",
+                erro,
+            )
+
+        return (
+            "",
+            "",
+            html.Div(
+                "Livro adicionado com sucesso.",
+                className="sale-success-message",
+            ),
+            refresh + 1,
+            resultado["livro_id"],
+        )
+
+    return (
+        "",
+        "",
+        "",
+        refresh,
+        livro_id,
     )
 
 
@@ -2192,6 +3968,76 @@ def pesquisar_catalogo(
             dados_filtrados
         ),
         resultado_api,
+    )
+
+
+# Novo cliente na venda
+
+@app.callback(
+    Output("sale-new-client-form", "className"),
+    Input("sale-client", "value"),
+)
+def mostrar_formulario_novo_cliente(cliente_id):
+    if cliente_id == "novo_cliente":
+        return "new-client-form"
+
+    return "new-client-form hidden"
+
+
+@app.callback(
+    Output("sale-client", "options"),
+    Output("sale-client", "value"),
+    Output("sale-new-client-message", "children"),
+    Input("sale-new-client-submit", "n_clicks"),
+    State("sale-new-client-name", "value"),
+    State("sale-new-client-nif", "value"),
+    State("sale-new-client-phone", "value"),
+    State("sale-new-client-email", "value"),
+    State("sale-client", "options"),
+    prevent_initial_call=True,
+)
+def criar_cliente_na_venda(
+    n_clicks,
+    nome,
+    nif,
+    telemovel,
+    email,
+    opcoes_atuais,
+):
+    try:
+        resultado = adicionar_cliente(
+            nome,
+            nif,
+            telemovel,
+            email,
+        )
+    except ValueError as erro:
+        return (
+            opcoes_atuais,
+            "novo_cliente",
+            html.Div(
+                str(erro),
+                className="sale-error-message",
+            ),
+        )
+    except Exception as erro:
+        print("Erro ao adicionar cliente:", erro)
+        return (
+            opcoes_atuais,
+            "novo_cliente",
+            html.Div(
+                "Não foi possível adicionar o cliente.",
+                className="sale-error-message",
+            ),
+        )
+
+    return (
+        criar_opcoes_clientes_venda(),
+        resultado["cliente_id"],
+        html.Div(
+            "Cliente adicionado com sucesso.",
+            className="sale-success-message",
+        ),
     )
 
 
@@ -2424,6 +4270,16 @@ def gerir_venda(
                 ),
             )
 
+        if cliente_id == "novo_cliente":
+            return (
+                carrinho,
+                "",
+                html.Div(
+                    "Guarda primeiro os dados do novo cliente.",
+                    className="sale-error-message",
+                ),
+            )
+
         cliente_final = (
             None
             if cliente_id == "balcao"
@@ -2445,73 +4301,38 @@ def gerir_venda(
                 itens,
             )
         except Exception as erro:
+            print(
+                "Erro ao registar venda:",
+                erro,
+            )
             return (
                 carrinho,
                 "",
                 html.Div(
-                    f"Não foi possível registar a venda: {erro}",
+                    "Não foi possível registar a venda.",
                     className="sale-error-message",
                 ),
             )
 
         try:
-            atualizacao = executar_atualizacao_analitica()
-            mensagem_atualizacao = atualizacao["mensagem"]
-            atualizacao_ok = True
+            solicitar_atualizacao_analitica()
         except Exception as erro:
-            mensagem_atualizacao = (
-                "A venda foi registada, mas a atualização analítica falhou: "
-                f"{erro}"
+            print(
+                "Erro ao atualizar análises após venda:",
+                erro,
             )
-            atualizacao_ok = False
 
-        if atualizacao_ok:
-            mensagem_final = html.Div(
-                className="sale-final-success",
-                children=[
-                    html.Strong(
-                        "Venda registada com sucesso"
-                    ),
-                    html.Span(
-                        f"Venda #{resultado['venda_id']}"
-                    ),
-                    html.Span(
-                        f"Total: {formatar_euro(resultado['total'])}"
-                    ),
-                    html.Small(
-                        "O stock operacional foi atualizado automaticamente."
-                    ),
-                    html.Small(
-                        mensagem_atualizacao
-                    ),
-                    html.Small(
-                        "As análises do SABIN já podem apresentar os novos dados."
-                    ),
-                ],
-            )
-        else:
-            mensagem_final = html.Div(
-                children=[
-                    html.Div(
-                        className="sale-final-success",
-                        children=[
-                            html.Strong(
-                                "Venda registada com sucesso"
-                            ),
-                            html.Span(
-                                f"Venda #{resultado['venda_id']}"
-                            ),
-                            html.Span(
-                                f"Total: {formatar_euro(resultado['total'])}"
-                            ),
-                        ],
-                    ),
-                    html.Div(
-                        mensagem_atualizacao,
-                        className="sale-error-message",
-                    ),
-                ]
-            )
+        mensagem_final = html.Div(
+            className="sale-final-success",
+            children=[
+                html.Strong(
+                    "Venda registada com sucesso."
+                ),
+                html.Span(
+                    f"Total: {formatar_euro(resultado['total'])}"
+                ),
+            ],
+        )
 
         return (
             [],
@@ -2553,5 +4374,5 @@ def atualizar_carrinho(
 
 if __name__ == "__main__":
     app.run(
-        debug=True
+        debug=False
     )

@@ -1,6 +1,7 @@
 from pathlib import Path
 import subprocess
 import sys
+import threading
 
 
 BASE_DIR = (
@@ -111,6 +112,59 @@ def executar_atualizacao_analitica():
         "resultados": resultados,
     }
 
+
+
+_estado_lock = threading.Lock()
+_atualizacao_em_execucao = False
+_atualizacao_pendente = False
+
+
+def _executar_em_background():
+    global _atualizacao_em_execucao
+    global _atualizacao_pendente
+
+    while True:
+        try:
+            executar_atualizacao_analitica()
+        except Exception as erro:
+            print(
+                "Erro na atualização analítica em segundo plano:",
+                erro,
+            )
+
+        with _estado_lock:
+            if _atualizacao_pendente:
+                _atualizacao_pendente = False
+                continue
+
+            _atualizacao_em_execucao = False
+            break
+
+
+def solicitar_atualizacao_analitica():
+    global _atualizacao_em_execucao
+    global _atualizacao_pendente
+
+    with _estado_lock:
+        if _atualizacao_em_execucao:
+            _atualizacao_pendente = True
+            return {
+                "agendada": True,
+                "em_execucao": True,
+            }
+
+        _atualizacao_em_execucao = True
+
+    thread = threading.Thread(
+        target=_executar_em_background,
+        daemon=True,
+    )
+    thread.start()
+
+    return {
+        "agendada": True,
+        "em_execucao": False,
+    }
 
 def main():
     print()

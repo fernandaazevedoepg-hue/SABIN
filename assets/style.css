@@ -39,24 +39,10 @@ body {
 }
 
 .menu {
-    margin-top: 38px;
+    margin-top: 45px;
     display: flex;
     flex-direction: column;
-    gap: 28px;
-}
-
-.menu-section {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.menu-label {
-    margin: 0 0 4px 8px;
-    color: #94a3b8;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 1.4px;
+    gap: 10px;
 }
 
 .menu-button {
@@ -950,4 +936,356 @@ body {
     .catalog-button {
         grid-column: auto;
     }
+}
+
+/* Menu agrupado */
+
+.menu-section-button {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    color: #cbd5e1;
+    padding: 14px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    text-align: left;
+}
+
+.menu-section-button:hover {
+    background: #293b61;
+    color: white;
+}
+
+.menu-arrow {
+    font-size: 12px;
+}
+
+.submenu {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding-left: 10px;
+}
+
+.submenu.collapsed {
+    display: none;
+}
+
+.submenu-button {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    color: #aebbd0;
+    text-align: left;
+    padding: 11px 14px 11px 20px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.submenu-button:hover {
+    background: #293b61;
+    color: white;
+}
+
+.submenu-button.active {
+    background: #2563eb;
+    color: white;
+}
+
+/* Gestão de Catálogo */
+
+.management-select-panel {
+    margin-top: 22px;
+}
+
+.form-help {
+    margin: 5px 0 0;
+    color: #64748b;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.management-summary {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.stock-explanation {
+    margin: 10px 2px 0;
+    color: #64748b;
+    font-size: 12px;
+}
+
+.quantity-stepper {
+    display: grid;
+    grid-template-columns: 44px 1fr 44px;
+    width: 100%;
+    height: 44px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    overflow: hidden;
+    background: white;
+}
+
+.stepper-button {
+    border: 0;
+    background: #f8fafc;
+    color: #1e3a8a;
+    font-size: 20px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.stepper-button:hover {
+    background: #e2e8f0;
+}
+
+.stepper-input {
+    width: 100%;
+    min-width: 0;
+    border: 0;
+    border-left: 1px solid #e2e8f0;
+    border-right: 1px solid #e2e8f0;
+    padding: 0 14px;
+    font-size: 14px;
+    outline: none;
+}
+
+.stepper-input::-webkit-inner-spin-button,
+.stepper-input::-webkit-outer-spin-button,
+.clean-number-input::-webkit-inner-spin-button,
+.clean-number-input::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.stepper-input,
+.clean-number-input {
+    appearance: textfield;
+    -moz-appearance: textfield;
+}
+
+.management-textarea {
+    width: 100%;
+    min-height: 90px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 12px;
+    font-family: Arial, sans-serif;
+    font-size: 14px;
+    resize: vertical;
+}
+
+.add-book-panel {
+    margin-top: 20px;
+}
+
+.panel-heading-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+}
+
+.panel-heading-row h3 {
+    margin: 0;
+}
+
+.book-form-grid {
+    margin-top: 8px;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0 16px;
+}
+
+.form-field {
+    min-width: 0;
+}
+
+.form-field.span-2 {
+    grid-column: span 2;
+}
+
+.add-book-button {
+    margin-top: 20px;
+    width: 100%;
+}
+
+.management-history-grid {
+    margin-top: 20px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    align-items: start;
+}
+
+/* Stock completo */
+
+.stock-all-panel {
+    margin-top: 20px;
+}
+
+.stock-all-table th,
+.stock-all-table td {
+    white-space: nowrap;
+}
+
+.stock-status {
+    display: inline-block;
+    padding: 5px 9px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.stock-status.critical {
+    background: #fee2e2;
+    color: #b91c1c;
+}
+
+.stock-status.warning {
+    background: #fef3c7;
+    color: #b45309;
+}
+
+.stock-status.normal {
+    background: #dcfce7;
+    color: #15803d;
+}
+
+.stock-status.neutral {
+    background: #e2e8f0;
+    color: #475569;
+}
+
+@media (max-width: 1150px) {
+    .management-summary {
+        grid-template-columns: repeat(3, 1fr);
+    }
+
+    .book-form-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .management-history-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 700px) {
+    .management-summary,
+    .book-form-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .form-field.span-2 {
+        grid-column: span 1;
+    }
+}
+
+/* Novo cliente na venda */
+
+.new-client-form {
+    margin-top: 14px;
+    padding: 16px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 9px;
+}
+
+.new-client-form.hidden {
+    display: none;
+}
+
+.new-client-form h4 {
+    margin: 0 0 4px;
+    font-size: 15px;
+}
+
+.new-client-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 12px;
+}
+
+.new-client-submit {
+    width: 100%;
+    margin-top: 14px;
+}
+
+/* Data do novo livro */
+
+.book-date-picker {
+    width: 100%;
+}
+
+.book-date-picker .DateInput,
+.book-date-picker .DateInput_input,
+.book-date-picker .SingleDatePicker,
+.book-date-picker .SingleDatePickerInput {
+    width: 100%;
+}
+
+.book-date-picker .SingleDatePickerInput {
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.book-date-picker .DateInput_input {
+    height: 42px;
+    padding: 0 12px;
+    border: 0;
+    font-size: 14px;
+}
+
+@media (max-width: 900px) {
+    .new-client-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .new-client-grid .span-2 {
+        grid-column: auto;
+    }
+}
+
+/* Reservas */
+
+.reservation-layout {
+    align-items: start;
+}
+
+.reservation-actions {
+    margin-top: 18px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+.reservation-actions .primary-button,
+.reservation-actions .secondary-button {
+    width: 100%;
+}
+
+.reservation-table-panel {
+    margin-top: 20px;
+}
+
+.compact-message {
+    margin-top: 8px;
+    padding: 8px 10px;
+}
+
+@media (max-width: 700px) {
+    .reservation-actions {
+        grid-template-columns: 1fr;
+    }
+}
+
+.reservation-actions.single-action {
+    grid-template-columns: 1fr;
 }

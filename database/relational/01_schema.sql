@@ -1,9 +1,7 @@
--- Estrutura operacional da livraria Bookmarked
 
+-- Estrutura principal da base operacional da livraria Bookmarked.
 
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
-CREATE TABLE IF NOT EXISTS autores (
+CREATE TABLE autores (
     id BIGSERIAL PRIMARY KEY,
     nome VARCHAR(150) NOT NULL,
     nacionalidade VARCHAR(80),
@@ -11,13 +9,13 @@ CREATE TABLE IF NOT EXISTS autores (
     criado_em TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS generos (
+CREATE TABLE generos (
     id SERIAL PRIMARY KEY,
     nome VARCHAR(80) NOT NULL UNIQUE,
     descricao TEXT
 );
 
-CREATE TABLE IF NOT EXISTS livros (
+CREATE TABLE livros (
     id BIGSERIAL PRIMARY KEY,
     titulo VARCHAR(255) NOT NULL,
     isbn VARCHAR(20) NOT NULL UNIQUE,
@@ -31,19 +29,19 @@ CREATE TABLE IF NOT EXISTS livros (
     atualizado_em TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS livro_autores (
+CREATE TABLE livro_autores (
     livro_id BIGINT NOT NULL REFERENCES livros(id) ON DELETE CASCADE,
     autor_id BIGINT NOT NULL REFERENCES autores(id) ON DELETE CASCADE,
     PRIMARY KEY (livro_id, autor_id)
 );
 
-CREATE TABLE IF NOT EXISTS livro_generos (
+CREATE TABLE livro_generos (
     livro_id BIGINT NOT NULL REFERENCES livros(id) ON DELETE CASCADE,
     genero_id INTEGER NOT NULL REFERENCES generos(id) ON DELETE CASCADE,
     PRIMARY KEY (livro_id, genero_id)
 );
 
-CREATE TABLE IF NOT EXISTS clientes (
+CREATE TABLE clientes (
     id BIGSERIAL PRIMARY KEY,
     nome_completo VARCHAR(200) NOT NULL,
     nif VARCHAR(9) NOT NULL UNIQUE,
@@ -54,7 +52,7 @@ CREATE TABLE IF NOT EXISTS clientes (
     total_compras_qtd INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE TABLE IF NOT EXISTS vendas (
+CREATE TABLE vendas (
     id BIGSERIAL PRIMARY KEY,
     cliente_id BIGINT REFERENCES clientes(id) ON DELETE SET NULL,
     data_venda TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
@@ -63,16 +61,17 @@ CREATE TABLE IF NOT EXISTS vendas (
     status VARCHAR(20) NOT NULL DEFAULT 'Concluída'
 );
 
-CREATE TABLE IF NOT EXISTS itens_venda (
+CREATE TABLE itens_venda (
     id BIGSERIAL PRIMARY KEY,
     venda_id BIGINT NOT NULL REFERENCES vendas(id) ON DELETE CASCADE,
     livro_id BIGINT NOT NULL REFERENCES livros(id) ON DELETE RESTRICT,
     quantidade INTEGER NOT NULL,
     preco_unitario NUMERIC(10,2) NOT NULL,
-    subtotal NUMERIC(12,2) GENERATED ALWAYS AS (quantidade * preco_unitario) STORED
+    subtotal NUMERIC(12,2)
+        GENERATED ALWAYS AS (quantidade * preco_unitario) STORED
 );
 
-CREATE TABLE IF NOT EXISTS reservas (
+CREATE TABLE reservas (
     id BIGSERIAL PRIMARY KEY,
     cliente_id BIGINT NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
     livro_id BIGINT NOT NULL REFERENCES livros(id) ON DELETE CASCADE,
@@ -82,12 +81,26 @@ CREATE TABLE IF NOT EXISTS reservas (
     data_limite DATE NOT NULL
 );
 
-COMMENT ON TABLE autores IS 'Autores dos livros disponíveis na Bookmarked.';
-COMMENT ON TABLE generos IS 'Géneros literários utilizados para classificar os livros.';
-COMMENT ON TABLE livros IS 'Catálogo operacional de livros da Bookmarked.';
-COMMENT ON TABLE livro_autores IS 'Relação N:N entre livros e autores.';
-COMMENT ON TABLE livro_generos IS 'Relação N:N entre livros e géneros.';
-COMMENT ON TABLE clientes IS 'Clientes registados da livraria.';
-COMMENT ON TABLE vendas IS 'Cabeçalho de cada venda; cliente_id pode ser NULL para venda ao balcão.';
-COMMENT ON TABLE itens_venda IS 'Linhas de cada venda, uma por livro vendido.';
-COMMENT ON TABLE reservas IS 'Reservas de livros efetuadas pelos clientes.';
+-- Guarda o histórico de entradas e saídas de stock.
+CREATE TABLE movimentos_stock (
+    id BIGSERIAL PRIMARY KEY,
+    livro_id BIGINT NOT NULL REFERENCES livros(id) ON DELETE RESTRICT,
+    tipo VARCHAR(20) NOT NULL,
+    quantidade INTEGER NOT NULL,
+    stock_anterior INTEGER NOT NULL,
+    stock_novo INTEGER NOT NULL,
+    origem VARCHAR(50) NOT NULL,
+    referencia_id BIGINT,
+    data_movimento TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    observacao TEXT
+);
+
+-- Guarda o histórico das alterações de preço.
+CREATE TABLE historico_precos (
+    id BIGSERIAL PRIMARY KEY,
+    livro_id BIGINT NOT NULL REFERENCES livros(id) ON DELETE RESTRICT,
+    preco_anterior NUMERIC(10,2) NOT NULL,
+    preco_novo NUMERIC(10,2) NOT NULL,
+    data_alteracao TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    observacao TEXT
+);
