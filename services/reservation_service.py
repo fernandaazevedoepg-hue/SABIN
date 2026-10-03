@@ -4,6 +4,8 @@ from datetime import date
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 
+from services.sales_service import METODOS_PAGAMENTO
+
 
 load_dotenv()
 
@@ -308,4 +310,173 @@ def atualizar_status_reserva(
         "sucesso": True,
         "reserva_id": int(reserva_id),
         "status": novo_status,
+    }
+
+
+def concluir_reserva_com_venda(
+    reserva_id,
+    metodo_pagamento,
+):
+    if not reserva_id:
+        raise ValueError(
+            "Seleciona uma reserva pendente."
+        )
+
+    if metodo_pagamento not in METODOS_PAGAMENTO:
+        raise ValueError(
+            "Seleciona um método de pagamento válido."
+        )
+
+    expirar_reservas()
+
+    with engine.begin() as connection:
+        reserva = (
+            connection.execute(
+                text("""
+                    SELECT
+                        r.id,
+                        r.cliente_id,
+                        r.livro_id,
+                        r.quantidade,
+                        r.status,
+                        r.data_limite,
+                        l.titulo,
+                        l.preco_venda
+                    FROM public.reservas r
+                    JOIN public.livros l
+                        ON l.id = r.livro_id
+                    WHERE r.id = :reserva_id
+                    FOR UPDATE OF r, l;
+                """),
+                {
+                    "reserva_id": int(reserva_id),
+                },
+            )
+            .mappings()
+            .first()
+        )
+
+        if not reserva:
+            raise ValueError(
+                "Reserva não encontrada."
+            )
+
+        if reserva["status"] != "Pendente":
+            raise ValueError(
+                "Esta reserva já não está pendente."
+            )
+
+        if reserva["data_limite"] < date.today():
+            connection.execute(
+                text("""
+                    UPDATE public.reservas
+                    SET status = 'Expirada'
+                    WHERE id = :reserva_id;
+                """),
+                {
+                    "reserva_id": int(reserva_id),
+                },
+            )
+
+            raise ValueError(
+                "Esta reserva já expirou."
+            )
+
+        quantidade = int(
+            reserva["quantidade"]
+        )
+
+        preco_unitario = reserva["preco_venda"]
+        valor_total = (
+            preco_unitario
+            * quantidade
+        )
+
+        connection.execute(
+            text("""
+                UPDATE public.reservas
+                SET status = 'Concluída'
+                WHERE id = :reserva_id;
+            """),
+            {
+                "reserva_id": int(reserva_id),
+            },
+        )
+
+        venda = (
+            connection.execute(
+                text("""
+                    INSERT INTO public.vendas (
+                        cliente_id,
+                        valor_total,
+                        metodo_pagamento,
+                        status
+                    )
+                    VALUES (
+                        :cliente_id,
+                        0,
+                        :metodo_pagamento,
+                        'Concluída'
+                    )
+                    RETURNING id;
+                """),
+                {
+                    "cliente_id": int(
+                        reserva["cliente_id"]
+                    ),
+                    "metodo_pagamento": metodo_pagamento,
+                },
+            )
+            .mappings()
+            .one()
+        )
+
+        venda_id = int(
+            venda["id"]
+        )
+
+        connection.execute(
+            text("""
+                INSERT INTO public.itens_venda (
+                    venda_id,
+                    livro_id,
+                    quantidade,
+                    preco_unitario
+                )
+                VALUES (
+                    :venda_id,
+                    :livro_id,
+                    :quantidade,
+                    :preco_unitario
+                );
+            """),
+            {
+                "venda_id": venda_id,
+                "livro_id": int(
+                    reserva["livro_id"]
+                ),
+                "quantidade": quantidade,
+                "preco_unitario": preco_unitario,
+            },
+        )
+
+        connection.execute(
+            text("""
+                UPDATE public.vendas
+                SET valor_total = :valor_total
+                WHERE id = :venda_id;
+            """),
+            {
+                "valor_total": valor_total,
+                "venda_id": venda_id,
+            },
+        )
+
+    return {
+        "sucesso": True,
+        "reserva_id": int(reserva_id),
+        "venda_id": venda_id,
+        "titulo": reserva["titulo"],
+        "quantidade": quantidade,
+        "valor_total": float(valor_total),
     }

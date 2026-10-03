@@ -28,10 +28,14 @@ from services.sales_service import (
     obter_livro,
     registar_venda,
 )
-from services.etl_service import solicitar_atualizacao_analitica
+from services.etl_service import (
+    obter_estado_atualizacao,
+    solicitar_atualizacao_analitica,
+)
 from services.customer_service import adicionar_cliente
 from services.reservation_service import (
     atualizar_status_reserva,
+    concluir_reserva_com_venda,
     carregar_clientes_reserva,
     carregar_livros_reserva,
     carregar_reservas,
@@ -2498,9 +2502,31 @@ def pagina_reservas():
                                 searchable=True,
                                 className="sale-dropdown",
                             ),
+                            html.Label(
+                                "Método de pagamento",
+                                className="form-label",
+                            ),
+                            dcc.Dropdown(
+                                id="reservation-payment-method",
+                                options=[
+                                    {
+                                        "label": metodo,
+                                        "value": metodo,
+                                    }
+                                    for metodo in METODOS_PAGAMENTO
+                                ],
+                                value=METODOS_PAGAMENTO[0],
+                                clearable=False,
+                                className="sale-dropdown",
+                            ),
                             html.Div(
-                                className="reservation-actions single-action",
+                                className="reservation-actions",
                                 children=[
+                                    html.Button(
+                                        "Levantar e Registar Venda",
+                                        id="reservation-complete-sale",
+                                        className="primary-button",
+                                    ),
                                     html.Button(
                                         "Cancelar Reserva",
                                         id="reservation-cancel",
@@ -2509,7 +2535,7 @@ def pagina_reservas():
                                 ],
                             ),
                             html.P(
-                                "Quando o cliente levantar o livro, regista a venda normalmente em Registar Venda.",
+                                "Ao levantar o livro, a reserva é concluída e a venda é registada automaticamente.",
                                 className="form-help",
                             ),
                         ],
@@ -3081,6 +3107,159 @@ def pagina_stock():
     )
 
 
+def obter_assinatura_analitica():
+    query = text("""
+        SELECT
+            (
+                SELECT COUNT(DISTINCT v.id)
+                FROM public.vendas v
+                WHERE v.status = 'Concluída'
+                  AND EXISTS (
+                      SELECT 1
+                      FROM public.itens_venda i
+                      WHERE i.venda_id = v.id
+                  )
+            ) AS vendas_operacionais,
+            (
+                SELECT COALESCE(MAX(v.id), 0)
+                FROM public.vendas v
+                WHERE v.status = 'Concluída'
+                  AND EXISTS (
+                      SELECT 1
+                      FROM public.itens_venda i
+                      WHERE i.venda_id = v.id
+                  )
+            ) AS ultima_venda_operacional,
+            (
+                SELECT COUNT(DISTINCT venda_id_origem)
+                FROM dw.fact_vendas
+            ) AS vendas_dw,
+            (
+                SELECT COALESCE(MAX(venda_id_origem), 0)
+                FROM dw.fact_vendas
+            ) AS ultima_venda_dw,
+            (
+                SELECT COUNT(*)
+                FROM public.livros
+            ) AS livros_operacionais,
+            (
+                SELECT COUNT(*)
+                FROM dw.alertas_stock
+            ) AS livros_stock_dw,
+            (
+                SELECT COALESCE(
+                    SUM(
+                        GREATEST(
+                            estoque_atual - qtd_reservada,
+                            0
+                        )
+                    ),
+                    0
+                )
+                FROM public.livros
+            ) AS stock_operacional,
+            (
+                SELECT COALESCE(SUM(stock_disponivel), 0)
+                FROM dw.alertas_stock
+            ) AS stock_dw;
+    """)
+
+    try:
+        with engine.connect() as connection:
+            resultado = (
+                connection.execute(query)
+                .mappings()
+                .one()
+            )
+    except Exception as erro:
+        print(
+            "Erro ao verificar sincronização analítica:",
+            erro,
+        )
+        return {
+            "sincronizado": False,
+            "assinatura": None,
+        }
+
+    vendas_operacionais = int(
+        resultado["vendas_operacionais"] or 0
+    )
+    ultima_venda_operacional = int(
+        resultado["ultima_venda_operacional"] or 0
+    )
+    vendas_dw = int(
+        resultado["vendas_dw"] or 0
+    )
+    ultima_venda_dw = int(
+        resultado["ultima_venda_dw"] or 0
+    )
+    livros_operacionais = int(
+        resultado["livros_operacionais"] or 0
+    )
+    livros_stock_dw = int(
+        resultado["livros_stock_dw"] or 0
+    )
+    stock_operacional = int(
+        resultado["stock_operacional"] or 0
+    )
+    stock_dw = int(
+        resultado["stock_dw"] or 0
+    )
+
+    sincronizado = (
+        vendas_operacionais == vendas_dw
+        and ultima_venda_operacional == ultima_venda_dw
+        and livros_operacionais == livros_stock_dw
+        and stock_operacional == stock_dw
+    )
+
+    assinatura = (
+        f"{vendas_dw}:"
+        f"{ultima_venda_dw}:"
+        f"{livros_stock_dw}:"
+        f"{stock_dw}"
+    )
+
+    return {
+        "sincronizado": sincronizado,
+        "assinatura": assinatura,
+    }
+
+
+def criar_visao_geral_em_atualizacao():
+    return html.Div(
+        children=[
+            html.Div(
+                className="page-header",
+                children=[
+                    html.H2("Visão Geral"),
+                    html.P(
+                        "Resumo do desempenho atual da livraria Bookmarked"
+                    ),
+                ],
+            ),
+            html.Div(
+                className="sale-form-panel",
+                children=[
+                    html.H3("A atualizar os dados"),
+                    html.P(
+                        "A operação já foi registada. Os indicadores serão atualizados automaticamente."
+                    ),
+                ],
+            ),
+        ]
+    )
+
+
+def pagina_visao_geral_segura():
+    estado = obter_estado_atualizacao()
+
+    if estado.get("em_execucao"):
+        return criar_visao_geral_em_atualizacao()
+
+    return pagina_visao_geral()
+
+
 # Aplicação
 
 app = Dash(
@@ -3094,11 +3273,20 @@ app.title = "SABIN"
 app.layout = html.Div(
     className="app",
     children=[
+        dcc.Interval(
+            id="analytics-refresh-interval",
+            interval=1500,
+            n_intervals=0,
+        ),
+        dcc.Store(
+            id="analytics-version-store",
+            data=obter_estado_atualizacao().get("versao", 0),
+        ),
         criar_sidebar(),
         html.Main(
             id="page-content",
             className="content",
-            children=pagina_visao_geral(),
+            children=pagina_visao_geral_segura(),
         ),
     ],
 )
@@ -3334,7 +3522,7 @@ def navegar(
         )
 
     return (
-        pagina_visao_geral(),
+        pagina_visao_geral_segura(),
         visao_ativo,
         submenu_normal,
         submenu_normal,
@@ -3345,29 +3533,92 @@ def navegar(
     )
 
 
+@app.callback(
+    Output(
+        "page-content",
+        "children",
+        allow_duplicate=True,
+    ),
+    Output(
+        "analytics-version-store",
+        "data",
+    ),
+    Input(
+        "analytics-refresh-interval",
+        "n_intervals",
+    ),
+    State(
+        "analytics-version-store",
+        "data",
+    ),
+    State(
+        "btn-visao-geral",
+        "className",
+    ),
+    prevent_initial_call=True,
+)
+def atualizar_visao_geral_automaticamente(
+    n_intervals,
+    assinatura_vista,
+    classe_visao,
+):
+    if "active" not in (
+        classe_visao or ""
+    ).split():
+        return (
+            no_update,
+            assinatura_vista,
+        )
+
+    estado = obter_estado_atualizacao()
+
+    if estado.get("em_execucao"):
+        return (
+            no_update,
+            assinatura_vista,
+        )
+
+    assinatura_atual = estado.get("versao", 0)
+
+    if assinatura_atual == assinatura_vista:
+        return (
+            no_update,
+            assinatura_vista,
+        )
+
+    return (
+        pagina_visao_geral(),
+        assinatura_atual,
+    )
+
+
 # Quantidade da venda
 
 @app.callback(
     Output("reservation-message", "children"),
     Output("reservation-refresh-store", "data"),
     Input("reservation-submit", "n_clicks"),
+    Input("reservation-complete-sale", "n_clicks"),
     Input("reservation-cancel", "n_clicks"),
     State("reservation-client", "value"),
     State("reservation-book", "value"),
     State("reservation-quantity", "value"),
     State("reservation-limit-date", "date"),
     State("reservation-active", "value"),
+    State("reservation-payment-method", "value"),
     State("reservation-refresh-store", "data"),
     prevent_initial_call=True,
 )
 def gerir_reserva(
     criar_click,
+    concluir_click,
     cancelar_click,
     cliente_id,
     livro_id,
     quantidade,
     data_limite,
     reserva_id,
+    metodo_pagamento,
     refresh,
 ):
     acao = ctx.triggered_id
@@ -3382,6 +3633,18 @@ def gerir_reserva(
                 data_limite,
             )
             mensagem = "Reserva criada com sucesso."
+
+        elif acao == "reservation-complete-sale":
+            if not reserva_id:
+                raise ValueError(
+                    "Seleciona uma reserva pendente."
+                )
+
+            concluir_reserva_com_venda(
+                reserva_id,
+                metodo_pagamento,
+            )
+            mensagem = "Reserva concluída e venda registada com sucesso."
 
         elif acao == "reservation-cancel":
             if not reserva_id:
@@ -3502,20 +3765,105 @@ def inferir_generos_api(assuntos):
     )
 
     palavras_por_genero = {
-        "Ficção": ["fiction", "novel", "romans nouvelles"],
-        "Distopia": ["dystopia", "dystopian"],
-        "Romance": ["romance", "love stories", "love romance", "love fiction"],
-        "Policial": ["detective", "mystery", "crime", "investigation", "police"],
-        "Poesia": ["poetry", "poems", "poesia"],
-        "Fantasia": ["fantasy", "magic", "fairies", "faerie", "fantastique"],
-        "Terror": ["horror", "ghost", "supernatural", "occult"],
-        "Ficção Científica": ["science fiction", "sci fi", "space opera"],
-        "Suspense": ["thriller", "suspense"],
-        "Autoajuda": ["self help", "personal development", "self improvement"],
-        "Biografia": ["biography", "autobiography", "memoir"],
-        "Infantil": ["children s fiction", "children fiction", "juvenile works"],
-        "Aventura": ["adventure", "action adventure"],
-        "Realismo Mágico": ["magical realism", "magic realism"],
+        "Ficção": [
+            "fiction",
+            "ficcao",
+            "novel",
+            "romans nouvelles",
+        ],
+        "Distopia": [
+            "dystopia",
+            "dystopian",
+            "distopia",
+            "distopico",
+        ],
+        "Romance": [
+            "romance",
+            "romantico",
+            "romantica",
+            "love stories",
+            "love romance",
+            "love fiction",
+        ],
+        "Policial": [
+            "detective",
+            "mystery",
+            "crime",
+            "investigation",
+            "police",
+            "policial",
+            "misterio",
+            "investigacao",
+        ],
+        "Poesia": [
+            "poetry",
+            "poems",
+            "poesia",
+            "poemas",
+        ],
+        "Fantasia": [
+            "fantasy",
+            "fantasia",
+            "fantastico",
+            "fantastica",
+            "magic",
+            "magia",
+            "fairies",
+            "faerie",
+            "fantastique",
+        ],
+        "Terror": [
+            "horror",
+            "terror",
+            "ghost",
+            "fantasma",
+            "supernatural",
+            "sobrenatural",
+            "occult",
+            "oculto",
+        ],
+        "Ficção Científica": [
+            "science fiction",
+            "ficcao cientifica",
+            "sci fi",
+            "space opera",
+        ],
+        "Suspense": [
+            "thriller",
+            "suspense",
+        ],
+        "Autoajuda": [
+            "self help",
+            "personal development",
+            "self improvement",
+            "autoajuda",
+            "desenvolvimento pessoal",
+        ],
+        "Biografia": [
+            "biography",
+            "autobiography",
+            "memoir",
+            "biografia",
+            "autobiografia",
+            "memorias",
+        ],
+        "Infantil": [
+            "children s fiction",
+            "children fiction",
+            "juvenile works",
+            "infantil",
+            "juvenil",
+        ],
+        "Aventura": [
+            "adventure",
+            "action adventure",
+            "aventura",
+        ],
+        "Realismo Mágico": [
+            "magical realism",
+            "magic realism",
+            "realismo magico",
+        ],
     }
 
     generos_disponiveis = carregar_generos_gestao()
