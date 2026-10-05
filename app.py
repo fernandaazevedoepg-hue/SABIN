@@ -29,18 +29,22 @@ from services.sales_service import (
     registar_venda,
 )
 from services.etl_service import (
-    obter_estado_atualizacao,
+    executar_atualizacao_analitica,
     solicitar_atualizacao_analitica,
 )
 from services.customer_service import adicionar_cliente
 from services.reservation_service import (
     atualizar_status_reserva,
-    concluir_reserva_com_venda,
     carregar_clientes_reserva,
     carregar_livros_reserva,
     carregar_reservas,
     criar_reserva,
     expirar_reservas,
+)
+from services.export_service import (
+    abrir_power_bi,
+    gerar_excel,
+    gerar_pdf,
 )
 from services.catalog_service import (
     adicionar_livro,
@@ -803,7 +807,7 @@ def criar_resultado_externo(
                         ]
                     ),
                     html.Span(
-                        resultado.get("origem") or "API externa",
+                        "Open Library API",
                         className="origin-badge api",
                     ),
                 ],
@@ -1156,6 +1160,11 @@ def criar_sidebar():
                             html.Button(
                                 "Stock e Reposição",
                                 id="btn-stock",
+                                className="submenu-button",
+                            ),
+                            html.Button(
+                                "Exportações",
+                                id="btn-exportacoes",
                                 className="submenu-button",
                             ),
                         ],
@@ -1744,7 +1753,7 @@ def pagina_registar_venda():
 def criar_tabela_movimentos_stock(movimentos):
     if not movimentos:
         return html.Div(
-            "Ainda não existem movimentos de stock registados.",
+            "Ainda não existem movimentos de stock para este livro.",
             className="empty-cart",
         )
 
@@ -1759,7 +1768,6 @@ def criar_tabela_movimentos_stock(movimentos):
             html.Tr(
                 children=[
                     html.Td(data),
-                    html.Td(movimento.get("titulo") or "—"),
                     html.Td(movimento["tipo"]),
                     html.Td(str(movimento["quantidade"])),
                     html.Td(
@@ -1777,7 +1785,6 @@ def criar_tabela_movimentos_stock(movimentos):
                 html.Tr(
                     children=[
                         html.Th("Data"),
-                        html.Th("Livro"),
                         html.Th("Tipo"),
                         html.Th("Qtd."),
                         html.Th("Stock"),
@@ -1793,7 +1800,7 @@ def criar_tabela_movimentos_stock(movimentos):
 def criar_tabela_historico_precos(historico):
     if not historico:
         return html.Div(
-            "Ainda não existem alterações de preço registadas.",
+            "Ainda não existem alterações de preço para este livro.",
             className="empty-cart",
         )
 
@@ -1808,7 +1815,6 @@ def criar_tabela_historico_precos(historico):
             html.Tr(
                 children=[
                     html.Td(data),
-                    html.Td(registo.get("titulo") or "—"),
                     html.Td(
                         formatar_euro(
                             registo["preco_anterior"]
@@ -1830,7 +1836,6 @@ def criar_tabela_historico_precos(historico):
                 html.Tr(
                     children=[
                         html.Th("Data"),
-                        html.Th("Livro"),
                         html.Th("Preço anterior"),
                         html.Th("Novo preço"),
                     ]
@@ -2129,8 +2134,12 @@ def pagina_gestao_catalogo():
                                         placeholder="ISBN-10 ou ISBN-13",
                                         className="sale-number-input",
                                     ),
-                                    html.Div(
-                                        id="new-book-api-message",
+                                    dcc.Loading(
+                                        id="new-book-isbn-loading",
+                                        type="circle",
+                                        children=html.Div(
+                                            id="new-book-api-message",
+                                        ),
                                     ),
                                 ],
                             ),
@@ -2253,8 +2262,12 @@ def pagina_gestao_catalogo():
                         id="management-add-book-submit",
                         className="primary-button add-book-button",
                     ),
-                    html.Div(
-                        id="management-add-message",
+                    dcc.Loading(
+                        id="management-add-loading",
+                        type="circle",
+                        children=html.Div(
+                            id="management-add-message",
+                        ),
                     ),
                 ],
             ),
@@ -2264,13 +2277,12 @@ def pagina_gestao_catalogo():
                     html.Div(
                         className="sale-form-panel",
                         children=[
-                            html.H3("Últimos Movimentos de Stock"),
+                            html.H3("Movimentos de Stock"),
                             html.Div(
                                 id="management-stock-history",
-                                children=criar_tabela_movimentos_stock(
-                                    consultar_movimentos_stock(
-                                        limite=10,
-                                    )
+                                children=html.Div(
+                                    "Seleciona um livro para consultar o histórico.",
+                                    className="empty-cart",
                                 ),
                             ),
                         ],
@@ -2278,13 +2290,12 @@ def pagina_gestao_catalogo():
                     html.Div(
                         className="sale-form-panel",
                         children=[
-                            html.H3("Últimas Alterações de Preço"),
+                            html.H3("Histórico de Preços"),
                             html.Div(
                                 id="management-price-history",
-                                children=criar_tabela_historico_precos(
-                                    consultar_historico_precos(
-                                        limite=10,
-                                    )
+                                children=html.Div(
+                                    "Seleciona um livro para consultar o histórico.",
+                                    className="empty-cart",
                                 ),
                             ),
                         ],
@@ -2502,31 +2513,9 @@ def pagina_reservas():
                                 searchable=True,
                                 className="sale-dropdown",
                             ),
-                            html.Label(
-                                "Método de pagamento",
-                                className="form-label",
-                            ),
-                            dcc.Dropdown(
-                                id="reservation-payment-method",
-                                options=[
-                                    {
-                                        "label": metodo,
-                                        "value": metodo,
-                                    }
-                                    for metodo in METODOS_PAGAMENTO
-                                ],
-                                value=METODOS_PAGAMENTO[0],
-                                clearable=False,
-                                className="sale-dropdown",
-                            ),
                             html.Div(
-                                className="reservation-actions",
+                                className="reservation-actions single-action",
                                 children=[
-                                    html.Button(
-                                        "Levantar e Registar Venda",
-                                        id="reservation-complete-sale",
-                                        className="primary-button",
-                                    ),
                                     html.Button(
                                         "Cancelar Reserva",
                                         id="reservation-cancel",
@@ -2535,7 +2524,7 @@ def pagina_reservas():
                                 ],
                             ),
                             html.P(
-                                "Ao levantar o livro, a reserva é concluída e a venda é registada automaticamente.",
+                                "Quando o cliente levantar o livro, regista a venda normalmente em Registar Venda.",
                                 className="form-help",
                             ),
                         ],
@@ -2643,8 +2632,12 @@ def pagina_catalogo():
                             ),
                         ],
                     ),
-                    html.Div(
-                        id="catalog-api-message"
+                    dcc.Loading(
+                        id="catalog-api-loading",
+                        type="circle",
+                        children=html.Div(
+                            id="catalog-api-message"
+                        ),
                     ),
                     html.Div(
                         id="catalog-table-container",
@@ -3107,157 +3100,88 @@ def pagina_stock():
     )
 
 
-def obter_assinatura_analitica():
-    query = text("""
-        SELECT
-            (
-                SELECT COUNT(DISTINCT v.id)
-                FROM public.vendas v
-                WHERE v.status = 'Concluída'
-                  AND EXISTS (
-                      SELECT 1
-                      FROM public.itens_venda i
-                      WHERE i.venda_id = v.id
-                  )
-            ) AS vendas_operacionais,
-            (
-                SELECT COALESCE(MAX(v.id), 0)
-                FROM public.vendas v
-                WHERE v.status = 'Concluída'
-                  AND EXISTS (
-                      SELECT 1
-                      FROM public.itens_venda i
-                      WHERE i.venda_id = v.id
-                  )
-            ) AS ultima_venda_operacional,
-            (
-                SELECT COUNT(DISTINCT venda_id_origem)
-                FROM dw.fact_vendas
-            ) AS vendas_dw,
-            (
-                SELECT COALESCE(MAX(venda_id_origem), 0)
-                FROM dw.fact_vendas
-            ) AS ultima_venda_dw,
-            (
-                SELECT COUNT(*)
-                FROM public.livros
-            ) AS livros_operacionais,
-            (
-                SELECT COUNT(*)
-                FROM dw.alertas_stock
-            ) AS livros_stock_dw,
-            (
-                SELECT COALESCE(
-                    SUM(
-                        GREATEST(
-                            estoque_atual - qtd_reservada,
-                            0
-                        )
-                    ),
-                    0
-                )
-                FROM public.livros
-            ) AS stock_operacional,
-            (
-                SELECT COALESCE(SUM(stock_disponivel), 0)
-                FROM dw.alertas_stock
-            ) AS stock_dw;
-    """)
+# Página Exportações
 
-    try:
-        with engine.connect() as connection:
-            resultado = (
-                connection.execute(query)
-                .mappings()
-                .one()
-            )
-    except Exception as erro:
-        print(
-            "Erro ao verificar sincronização analítica:",
-            erro,
-        )
-        return {
-            "sincronizado": False,
-            "assinatura": None,
-        }
-
-    vendas_operacionais = int(
-        resultado["vendas_operacionais"] or 0
-    )
-    ultima_venda_operacional = int(
-        resultado["ultima_venda_operacional"] or 0
-    )
-    vendas_dw = int(
-        resultado["vendas_dw"] or 0
-    )
-    ultima_venda_dw = int(
-        resultado["ultima_venda_dw"] or 0
-    )
-    livros_operacionais = int(
-        resultado["livros_operacionais"] or 0
-    )
-    livros_stock_dw = int(
-        resultado["livros_stock_dw"] or 0
-    )
-    stock_operacional = int(
-        resultado["stock_operacional"] or 0
-    )
-    stock_dw = int(
-        resultado["stock_dw"] or 0
-    )
-
-    sincronizado = (
-        vendas_operacionais == vendas_dw
-        and ultima_venda_operacional == ultima_venda_dw
-        and livros_operacionais == livros_stock_dw
-        and stock_operacional == stock_dw
-    )
-
-    assinatura = (
-        f"{vendas_dw}:"
-        f"{ultima_venda_dw}:"
-        f"{livros_stock_dw}:"
-        f"{stock_dw}"
-    )
-
-    return {
-        "sincronizado": sincronizado,
-        "assinatura": assinatura,
-    }
-
-
-def criar_visao_geral_em_atualizacao():
+def pagina_exportacoes():
     return html.Div(
         children=[
             html.Div(
                 className="page-header",
                 children=[
-                    html.H2("Visão Geral"),
+                    html.H2("Exportações"),
                     html.P(
-                        "Resumo do desempenho atual da livraria Bookmarked"
+                        "Exportação de dados e atualização das componentes analíticas do SABIN"
                     ),
                 ],
             ),
+            dcc.Download(id="download-excel"),
+            dcc.Download(id="download-pdf"),
             html.Div(
-                className="sale-form-panel",
+                className="sale-layout",
                 children=[
-                    html.H3("A atualizar os dados"),
-                    html.P(
-                        "A operação já foi registada. Os indicadores serão atualizados automaticamente."
+                    html.Div(
+                        className="sale-form-panel",
+                        children=[
+                            html.H3("Exportar Dados"),
+                            html.P(
+                                "Gera ficheiros com os principais dados e indicadores atuais do sistema.",
+                                className="form-help",
+                            ),
+                            html.Button(
+                                "Exportar Excel",
+                                id="export-excel-button",
+                                className="primary-button sale-submit-button",
+                                n_clicks=0,
+                            ),
+                            html.P(
+                                "O ficheiro Excel inclui as folhas Resumo, Vendas, Livros, Clientes, Stock e Previsões.",
+                                className="form-help",
+                            ),
+                            html.Button(
+                                "Gerar Relatório PDF",
+                                id="export-pdf-button",
+                                className="secondary-button",
+                                n_clicks=0,
+                            ),
+                            html.P(
+                                "O PDF apresenta um resumo de gestão com indicadores, stock, vendas e previsão.",
+                                className="form-help",
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        className="sale-form-panel",
+                        children=[
+                            html.H3("Atualização Analítica"),
+                            html.P(
+                                "Atualiza o Data Warehouse, o modelo preditivo e os alertas utilizados pelo SABIN.",
+                                className="form-help",
+                            ),
+                            html.Button(
+                                "Atualizar Dados",
+                                id="export-update-button",
+                                className="primary-button sale-submit-button",
+                                n_clicks=0,
+                            ),
+                            html.Button(
+                                "Atualizar SABIN e Abrir Power BI",
+                                id="export-powerbi-button",
+                                className="secondary-button",
+                                n_clicks=0,
+                            ),
+                        ],
                     ),
                 ],
+            ),
+            dcc.Loading(
+                id="export-loading",
+                type="circle",
+                children=html.Div(
+                    id="export-message",
+                ),
             ),
         ]
     )
-
-
-def pagina_visao_geral_segura():
-    estado = obter_estado_atualizacao()
-
-    if estado.get("em_execucao"):
-        return criar_visao_geral_em_atualizacao()
-
-    return pagina_visao_geral()
 
 
 # Aplicação
@@ -3273,20 +3197,11 @@ app.title = "SABIN"
 app.layout = html.Div(
     className="app",
     children=[
-        dcc.Interval(
-            id="analytics-refresh-interval",
-            interval=1500,
-            n_intervals=0,
-        ),
-        dcc.Store(
-            id="analytics-version-store",
-            data=obter_estado_atualizacao().get("versao", 0),
-        ),
         criar_sidebar(),
         html.Main(
             id="page-content",
             className="content",
-            children=pagina_visao_geral_segura(),
+            children=pagina_visao_geral(),
         ),
     ],
 )
@@ -3425,6 +3340,7 @@ def alternar_menu_analises(
     Output("btn-catalogo", "className"),
     Output("btn-previsoes", "className"),
     Output("btn-stock", "className"),
+    Output("btn-exportacoes", "className"),
     Input("btn-visao-geral", "n_clicks"),
     Input("btn-venda", "n_clicks"),
     Input("btn-reservas", "n_clicks"),
@@ -3432,6 +3348,7 @@ def alternar_menu_analises(
     Input("btn-catalogo", "n_clicks"),
     Input("btn-previsoes", "n_clicks"),
     Input("btn-stock", "n_clicks"),
+    Input("btn-exportacoes", "n_clicks"),
 )
 def navegar(
     visao,
@@ -3441,6 +3358,7 @@ def navegar(
     catalogo,
     previsoes,
     stock,
+    exportacoes,
 ):
     botao = ctx.triggered_id
 
@@ -3459,6 +3377,7 @@ def navegar(
             submenu_normal,
             submenu_normal,
             submenu_normal,
+            submenu_normal,
         )
 
     if botao == "btn-reservas":
@@ -3467,6 +3386,7 @@ def navegar(
             visao_normal,
             submenu_normal,
             submenu_ativo,
+            submenu_normal,
             submenu_normal,
             submenu_normal,
             submenu_normal,
@@ -3483,6 +3403,7 @@ def navegar(
             submenu_normal,
             submenu_normal,
             submenu_normal,
+            submenu_normal,
         )
 
     if botao == "btn-catalogo":
@@ -3493,6 +3414,7 @@ def navegar(
             submenu_normal,
             submenu_normal,
             submenu_ativo,
+            submenu_normal,
             submenu_normal,
             submenu_normal,
         )
@@ -3507,6 +3429,7 @@ def navegar(
             submenu_normal,
             submenu_ativo,
             submenu_normal,
+            submenu_normal,
         )
 
     if botao == "btn-stock":
@@ -3519,11 +3442,26 @@ def navegar(
             submenu_normal,
             submenu_normal,
             submenu_ativo,
+            submenu_normal,
+        )
+
+    if botao == "btn-exportacoes":
+        return (
+            pagina_exportacoes(),
+            visao_normal,
+            submenu_normal,
+            submenu_normal,
+            submenu_normal,
+            submenu_normal,
+            submenu_normal,
+            submenu_normal,
+            submenu_ativo,
         )
 
     return (
-        pagina_visao_geral_segura(),
+        pagina_visao_geral(),
         visao_ativo,
+        submenu_normal,
         submenu_normal,
         submenu_normal,
         submenu_normal,
@@ -3533,62 +3471,95 @@ def navegar(
     )
 
 
+# Exportações
+
 @app.callback(
-    Output(
-        "page-content",
-        "children",
-        allow_duplicate=True,
-    ),
-    Output(
-        "analytics-version-store",
-        "data",
-    ),
-    Input(
-        "analytics-refresh-interval",
-        "n_intervals",
-    ),
-    State(
-        "analytics-version-store",
-        "data",
-    ),
-    State(
-        "btn-visao-geral",
-        "className",
-    ),
+    Output("download-excel", "data"),
+    Output("download-pdf", "data"),
+    Output("export-message", "children"),
+    Input("export-excel-button", "n_clicks"),
+    Input("export-pdf-button", "n_clicks"),
+    Input("export-update-button", "n_clicks"),
+    Input("export-powerbi-button", "n_clicks"),
     prevent_initial_call=True,
 )
-def atualizar_visao_geral_automaticamente(
-    n_intervals,
-    assinatura_vista,
-    classe_visao,
+def processar_exportacoes(
+    excel_clicks,
+    pdf_clicks,
+    update_clicks,
+    powerbi_clicks,
 ):
-    if "active" not in (
-        classe_visao or ""
-    ).split():
-        return (
-            no_update,
-            assinatura_vista,
+    acao = ctx.triggered_id
+
+    try:
+        if acao == "export-excel-button":
+            caminho = gerar_excel()
+
+            return (
+                dcc.send_file(str(caminho)),
+                no_update,
+                html.Div(
+                    "Excel gerado com sucesso.",
+                    className="sale-success-message",
+                ),
+            )
+
+        if acao == "export-pdf-button":
+            caminho = gerar_pdf()
+
+            return (
+                no_update,
+                dcc.send_file(str(caminho)),
+                html.Div(
+                    "Relatório PDF gerado com sucesso.",
+                    className="sale-success-message",
+                ),
+            )
+
+        if acao == "export-update-button":
+            executar_atualizacao_analitica()
+
+            return (
+                no_update,
+                no_update,
+                html.Div(
+                    "Data Warehouse, previsões e alertas atualizados com sucesso.",
+                    className="sale-success-message",
+                ),
+            )
+
+        if acao == "export-powerbi-button":
+            executar_atualizacao_analitica()
+            caminho = abrir_power_bi()
+
+            return (
+                no_update,
+                no_update,
+                html.Div(
+                    f"Dados atualizados e Power BI aberto: {caminho.name}",
+                    className="sale-success-message",
+                ),
+            )
+
+    except Exception as erro:
+        print(
+            "Erro na área de exportações:",
+            erro,
         )
 
-    estado = obter_estado_atualizacao()
-
-    if estado.get("em_execucao"):
         return (
             no_update,
-            assinatura_vista,
-        )
-
-    assinatura_atual = estado.get("versao", 0)
-
-    if assinatura_atual == assinatura_vista:
-        return (
             no_update,
-            assinatura_vista,
+            html.Div(
+                str(erro),
+                className="sale-error-message",
+            ),
         )
 
     return (
-        pagina_visao_geral(),
-        assinatura_atual,
+        no_update,
+        no_update,
+        no_update,
     )
 
 
@@ -3598,27 +3569,23 @@ def atualizar_visao_geral_automaticamente(
     Output("reservation-message", "children"),
     Output("reservation-refresh-store", "data"),
     Input("reservation-submit", "n_clicks"),
-    Input("reservation-complete-sale", "n_clicks"),
     Input("reservation-cancel", "n_clicks"),
     State("reservation-client", "value"),
     State("reservation-book", "value"),
     State("reservation-quantity", "value"),
     State("reservation-limit-date", "date"),
     State("reservation-active", "value"),
-    State("reservation-payment-method", "value"),
     State("reservation-refresh-store", "data"),
     prevent_initial_call=True,
 )
 def gerir_reserva(
     criar_click,
-    concluir_click,
     cancelar_click,
     cliente_id,
     livro_id,
     quantidade,
     data_limite,
     reserva_id,
-    metodo_pagamento,
     refresh,
 ):
     acao = ctx.triggered_id
@@ -3633,18 +3600,6 @@ def gerir_reserva(
                 data_limite,
             )
             mensagem = "Reserva criada com sucesso."
-
-        elif acao == "reservation-complete-sale":
-            if not reserva_id:
-                raise ValueError(
-                    "Seleciona uma reserva pendente."
-                )
-
-            concluir_reserva_com_venda(
-                reserva_id,
-                metodo_pagamento,
-            )
-            mensagem = "Reserva concluída e venda registada com sucesso."
 
         elif acao == "reservation-cancel":
             if not reserva_id:
@@ -3765,105 +3720,20 @@ def inferir_generos_api(assuntos):
     )
 
     palavras_por_genero = {
-        "Ficção": [
-            "fiction",
-            "ficcao",
-            "novel",
-            "romans nouvelles",
-        ],
-        "Distopia": [
-            "dystopia",
-            "dystopian",
-            "distopia",
-            "distopico",
-        ],
-        "Romance": [
-            "romance",
-            "romantico",
-            "romantica",
-            "love stories",
-            "love romance",
-            "love fiction",
-        ],
-        "Policial": [
-            "detective",
-            "mystery",
-            "crime",
-            "investigation",
-            "police",
-            "policial",
-            "misterio",
-            "investigacao",
-        ],
-        "Poesia": [
-            "poetry",
-            "poems",
-            "poesia",
-            "poemas",
-        ],
-        "Fantasia": [
-            "fantasy",
-            "fantasia",
-            "fantastico",
-            "fantastica",
-            "magic",
-            "magia",
-            "fairies",
-            "faerie",
-            "fantastique",
-        ],
-        "Terror": [
-            "horror",
-            "terror",
-            "ghost",
-            "fantasma",
-            "supernatural",
-            "sobrenatural",
-            "occult",
-            "oculto",
-        ],
-        "Ficção Científica": [
-            "science fiction",
-            "ficcao cientifica",
-            "sci fi",
-            "space opera",
-        ],
-        "Suspense": [
-            "thriller",
-            "suspense",
-        ],
-        "Autoajuda": [
-            "self help",
-            "personal development",
-            "self improvement",
-            "autoajuda",
-            "desenvolvimento pessoal",
-        ],
-        "Biografia": [
-            "biography",
-            "autobiography",
-            "memoir",
-            "biografia",
-            "autobiografia",
-            "memorias",
-        ],
-        "Infantil": [
-            "children s fiction",
-            "children fiction",
-            "juvenile works",
-            "infantil",
-            "juvenil",
-        ],
-        "Aventura": [
-            "adventure",
-            "action adventure",
-            "aventura",
-        ],
-        "Realismo Mágico": [
-            "magical realism",
-            "magic realism",
-            "realismo magico",
-        ],
+        "Ficção": ["fiction", "novel", "romans nouvelles"],
+        "Distopia": ["dystopia", "dystopian"],
+        "Romance": ["romance", "love stories", "love romance", "love fiction"],
+        "Policial": ["detective", "mystery", "crime", "investigation", "police"],
+        "Poesia": ["poetry", "poems", "poesia"],
+        "Fantasia": ["fantasy", "magic", "fairies", "faerie", "fantastique"],
+        "Terror": ["horror", "ghost", "supernatural", "occult"],
+        "Ficção Científica": ["science fiction", "sci fi", "space opera"],
+        "Suspense": ["thriller", "suspense"],
+        "Autoajuda": ["self help", "personal development", "self improvement"],
+        "Biografia": ["biography", "autobiography", "memoir"],
+        "Infantil": ["children s fiction", "children fiction", "juvenile works"],
+        "Aventura": ["adventure", "action adventure"],
+        "Realismo Mágico": ["magical realism", "magic realism"],
     }
 
     generos_disponiveis = carregar_generos_gestao()
@@ -3939,7 +3809,10 @@ def preencher_novo_livro_por_isbn(isbn):
             isbn_limpo
         )
     except Exception as erro:
-        print("Erro ao consultar ISBN:", erro)
+        print(
+            "Erro ao consultar ISBN:",
+            erro,
+        )
         return (
             no_update,
             no_update,
@@ -3995,11 +3868,24 @@ def preencher_novo_livro_por_isbn(isbn):
         resultado.get("generos") or []
     )
 
-    mensagem = (
-        "Dados encontrados e preenchidos automaticamente."
-        if genero_ids
-        else "Dados encontrados. Confirma o género antes de adicionar o livro."
-    )
+    nome_origem = origem or "fonte externa"
+
+    if genero_ids:
+        mensagem = (
+            f"Dados encontrados em {nome_origem} "
+            "e preenchidos automaticamente."
+        )
+        classe_mensagem = (
+            "sale-success-message compact-message"
+        )
+    else:
+        mensagem = (
+            f"Dados encontrados em {nome_origem}. "
+            "Confirma o género antes de adicionar o livro."
+        )
+        classe_mensagem = (
+            "sale-neutral-message compact-message"
+        )
 
     return (
         resultado.get("titulo") or no_update,
@@ -4011,11 +3897,7 @@ def preencher_novo_livro_por_isbn(isbn):
         genero_ids or no_update,
         html.Div(
             mensagem,
-            className=(
-                "sale-success-message compact-message"
-                if genero_ids
-                else "sale-neutral-message compact-message"
-            ),
+            className=classe_mensagem,
         ),
     )
 
@@ -4056,21 +3938,20 @@ def atualizar_gestao_catalogo(
     edit_refresh,
 ):
     if not livro_id:
-        movimentos_recentes = consultar_movimentos_stock(
-            limite=10,
+        vazio_stock = html.Div(
+            "Seleciona um livro para consultar o histórico.",
+            className="empty-cart",
         )
-        precos_recentes = consultar_historico_precos(
-            limite=10,
+
+        vazio_preco = html.Div(
+            "Seleciona um livro para consultar o histórico.",
+            className="empty-cart",
         )
 
         return (
             "",
-            criar_tabela_movimentos_stock(
-                movimentos_recentes
-            ),
-            criar_tabela_historico_precos(
-                precos_recentes
-            ),
+            vazio_stock,
+            vazio_preco,
         )
 
     livro = obter_livro_gestao(
@@ -4632,7 +4513,7 @@ def pesquisar_catalogo(
             resultado_api = html.Div(
                 resultado.get(
                     "erro",
-                    "ISBN não encontrado no catálogo local nem nas APIs externas.",
+                    "ISBN não encontrado no catálogo local nem nas fontes externas.",
                 ),
                 className="error-message",
             )

@@ -1,37 +1,110 @@
 import os
 import re
-
 import json
-import html as html_lib
+import unicodedata
+from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from html import unescape
+from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urljoin
+from urllib.parse import parse_qs, quote, unquote, urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
+
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 
+
+# Configuração
 
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not DATABASE_URL:
-    raise ValueError(
-        "DATABASE_URL não encontrada no ficheiro .env"
-    )
-
+    raise ValueError("DATABASE_URL não encontrada no ficheiro .env")
 
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
 )
 
-
 OPEN_LIBRARY_BOOKS_URL = "https://openlibrary.org/api/books"
 OPEN_LIBRARY_SEARCH_URL = "https://openlibrary.org/search.json"
 GOOGLE_BOOKS_VOLUMES_URL = "https://www.googleapis.com/books/v1/volumes"
-PRESENCA_SEARCH_URL = "https://www.presenca.pt/search"
-PRESENCA_SUGGEST_URL = "https://www.presenca.pt/search/suggest.json"
-PRESENCA_BASE_URL = "https://www.presenca.pt"
+
+HTTP_TIMEOUT_CURTO = 4
+HTTP_TIMEOUT_READER = 9
+
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/154.0.0.0 Safari/537.36"
+)
+
+DOMINIOS_CONFIAVEIS = (
+    "wook.pt",
+    "bertrand.pt",
+    "bertrandeditora.pt",
+    "fnac.pt",
+    "continente.pt",
+    "arquivolivraria.pt",
+)
+
+MARCADORES_BLOQUEIO = (
+    "attention required",
+    "cloudflare",
+    "just a moment",
+    "verify you are human",
+    "checking your browser",
+    "enable javascript and cookies",
+    "access denied",
+    "cf-chl-",
+    "captcha",
+    "request blocked",
+    "security check",
+)
+
+MESES = {
+    "janeiro": 1,
+    "jan": 1,
+    "january": 1,
+    "fevereiro": 2,
+    "fev": 2,
+    "february": 2,
+    "marco": 3,
+    "mar": 3,
+    "march": 3,
+    "abril": 4,
+    "abr": 4,
+    "april": 4,
+    "maio": 5,
+    "mai": 5,
+    "may": 5,
+    "junho": 6,
+    "jun": 6,
+    "june": 6,
+    "julho": 7,
+    "jul": 7,
+    "july": 7,
+    "agosto": 8,
+    "ago": 8,
+    "august": 8,
+    "setembro": 9,
+    "set": 9,
+    "september": 9,
+    "outubro": 10,
+    "out": 10,
+    "october": 10,
+    "novembro": 11,
+    "nov": 11,
+    "november": 11,
+    "dezembro": 12,
+    "dez": 12,
+    "december": 12,
+}
+
+
+# Utilitários de ISBN
 
 
 def normalizar_isbn(isbn):
@@ -53,11 +126,10 @@ def isbn13_para_isbn10(isbn):
         return None
 
     corpo = isbn_limpo[3:12]
-    soma = 0
-
-    for indice, digito in enumerate(corpo):
-        peso = 10 - indice
-        soma += int(digito) * peso
+    soma = sum(
+        int(digito) * (10 - indice)
+        for indice, digito in enumerate(corpo)
+    )
 
     resto = 11 - (soma % 11)
 
@@ -84,6 +156,38 @@ def variantes_isbn(isbn):
         variantes.append(isbn10)
 
     return variantes
+
+
+def _isbn_valido(isbn):
+    isbn_limpo = normalizar_isbn(isbn)
+
+    if len(isbn_limpo) == 10:
+        if not re.fullmatch(r"\d{9}[\dX]", isbn_limpo):
+            return False
+
+        soma = 0
+        for indice, caractere in enumerate(isbn_limpo):
+            valor = 10 if caractere == "X" else int(caractere)
+            soma += valor * (10 - indice)
+
+        return soma % 11 == 0
+
+    if len(isbn_limpo) == 13:
+        if not isbn_limpo.isdigit():
+            return False
+
+        soma = sum(
+            int(digito) * (1 if indice % 2 == 0 else 3)
+            for indice, digito in enumerate(isbn_limpo[:12])
+        )
+        controlo = (10 - (soma % 10)) % 10
+
+        return controlo == int(isbn_limpo[-1])
+
+    return False
+
+
+# Base local da Bookmarked
 
 
 def procurar_livro_local(isbn):
@@ -147,9 +251,7 @@ def procurar_livro_local(isbn):
         resultado = (
             connection.execute(
                 query,
-                {
-                    "isbn": isbn_limpo,
-                },
+                {"isbn": isbn_limpo},
             )
             .mappings()
             .first()
@@ -185,69 +287,148 @@ def procurar_livro_local(isbn):
     }
 
 
-def _obter_json(url, parametros):
-    endereco = f"{url}?{urlencode(parametros)}"
-    pedido = Request(
-        endereco,
+# HTTP
+
+
+def _criar_pedido(url, accept=None):
+    return Request(
+        url,
         headers={
-            "User-Agent": "SABIN-PAP/1.0",
-        },
-    )
-
-    with urlopen(pedido, timeout=8) as resposta:
-        return json.loads(
-            resposta.read().decode("utf-8")
-        )
-
-
-def _obter_texto(url, parametros=None):
-    if parametros:
-        endereco = f"{url}?{urlencode(parametros)}"
-    else:
-        endereco = url
-
-    pedido = Request(
-        endereco,
-        headers={
-            "User-Agent": (
-                "Mozilla/5.0 "
-                "(Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 "
-                "Chrome/120 Safari/537.36"
-            ),
+            "User-Agent": USER_AGENT,
             "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.8",
+            "Accept": accept
+            or "text/html,application/xhtml+xml,application/json,application/xml;q=0.9,*/*;q=0.8",
+            "Cache-Control": "no-cache",
         },
     )
 
-    with urlopen(pedido, timeout=10) as resposta:
-        return resposta.read().decode(
-            "utf-8",
-            errors="ignore",
-        )
+
+def _obter_json(url, parametros, timeout=HTTP_TIMEOUT_CURTO):
+    endereco = f"{url}?{urlencode(parametros)}"
+
+    with urlopen(_criar_pedido(endereco), timeout=timeout) as resposta:
+        return json.loads(resposta.read().decode("utf-8"))
 
 
-def _limpar_html(valor):
-    if not valor:
-        return ""
+def _obter_html(url, timeout=HTTP_TIMEOUT_CURTO):
+    with urlopen(_criar_pedido(url), timeout=timeout) as resposta:
+        conteudo = resposta.read()
+        charset = resposta.headers.get_content_charset() or "utf-8"
 
-    texto = re.sub(
-        r"<[^>]+>",
-        " ",
-        str(valor),
+        try:
+            html = conteudo.decode(charset, errors="replace")
+        except LookupError:
+            html = conteudo.decode("utf-8", errors="replace")
+
+        return html, resposta.geturl()
+
+
+def _obter_texto_reader(url, timeout=HTTP_TIMEOUT_READER):
+    # O Reader é usado apenas quando uma loja bloqueia o pedido HTML normal.
+    endereco = "https://r.jina.ai/" + str(url)
+
+    with urlopen(
+        _criar_pedido(
+            endereco,
+            accept="text/plain,text/markdown,*/*",
+        ),
+        timeout=timeout,
+    ) as resposta:
+        return resposta.read().decode("utf-8", errors="replace")
+
+
+# Limpeza e deteção de páginas bloqueadas
+
+
+def _sem_acentos(valor):
+    texto = unicodedata.normalize(
+        "NFKD",
+        str(valor or ""),
     )
-    texto = html_lib.unescape(texto)
-    texto = re.sub(
-        r"\s+",
-        " ",
-        texto,
-    ).strip()
-
-    return texto
+    return "".join(
+        caractere
+        for caractere in texto
+        if not unicodedata.combining(caractere)
+    )
 
 
-def _consultar_books_api(isbn):
+def _normalizar_texto(valor):
+    texto = _sem_acentos(valor).lower()
+    texto = re.sub(r"\s+", " ", texto)
+    return texto.strip()
+
+
+def _conteudo_bloqueado(conteudo):
+    normalizado = _normalizar_texto(conteudo)
+    return any(
+        _normalizar_texto(marcador) in normalizado
+        for marcador in MARCADORES_BLOQUEIO
+    )
+
+
+def _titulo_invalido(titulo):
+    if not titulo:
+        return True
+
+    normalizado = _normalizar_texto(titulo)
+
+    if len(normalizado) < 2:
+        return True
+
+    if any(
+        _normalizar_texto(marcador) in normalizado
+        for marcador in MARCADORES_BLOQUEIO
+    ):
+        return True
+
+    genericos = {
+        "pesquisa",
+        "search",
+        "home",
+        "inicio",
+        "livros",
+        "books",
+        "resultado da pesquisa",
+        "resultados de pesquisa",
+    }
+
+    return normalizado in genericos
+
+
+def _dominio_confiavel(url):
+    dominio = urlparse(str(url or "")).netloc.lower()
+    return any(
+        dominio == permitido or dominio.endswith("." + permitido)
+        for permitido in DOMINIOS_CONFIAVEIS
+    )
+
+
+def _prioridade_dominio(url):
+    dominio = urlparse(str(url or "")).netloc.lower()
+
+    ordem = {
+        "wook.pt": 0,
+        "www.wook.pt": 0,
+        "bertrand.pt": 1,
+        "www.bertrand.pt": 1,
+        "bertrandeditora.pt": 2,
+        "www.bertrandeditora.pt": 2,
+        "fnac.pt": 3,
+        "www.fnac.pt": 3,
+        "continente.pt": 4,
+        "www.continente.pt": 4,
+        "arquivolivraria.pt": 5,
+        "www.arquivolivraria.pt": 5,
+    }
+
+    return ordem.get(dominio, 99)
+
+
+# Open Library
+
+
+def _consultar_openlibrary_books(isbn):
     chave = f"ISBN:{isbn}"
-
     dados = _obter_json(
         OPEN_LIBRARY_BOOKS_URL,
         {
@@ -256,25 +437,22 @@ def _consultar_books_api(isbn):
             "format": "json",
         },
     )
-
     return dados.get(chave)
 
 
-def _consultar_search_api(isbn):
+def _consultar_openlibrary_search(isbn):
+    variantes = set(variantes_isbn(isbn))
+
     consultas = [
         {
             "isbn": isbn,
-            "limit": 1,
-            "fields": (
-                "title,author_name,publisher,first_publish_year,subject"
-            ),
+            "limit": 5,
+            "fields": "title,author_name,publisher,first_publish_year,subject,isbn",
         },
         {
             "q": isbn,
-            "limit": 1,
-            "fields": (
-                "title,author_name,publisher,first_publish_year,subject,isbn"
-            ),
+            "limit": 5,
+            "fields": "title,author_name,publisher,first_publish_year,subject,isbn",
         },
     ]
 
@@ -284,10 +462,15 @@ def _consultar_search_api(isbn):
             parametros,
         )
 
-        documentos = dados.get("docs") or []
+        for documento in dados.get("docs") or []:
+            isbns_documento = {
+                normalizar_isbn(valor)
+                for valor in (documento.get("isbn") or [])
+                if valor
+            }
 
-        if documentos:
-            return documentos[0]
+            if variantes & isbns_documento:
+                return documento
 
     return None
 
@@ -295,41 +478,21 @@ def _consultar_search_api(isbn):
 def procurar_livro_open_library(isbn):
     isbn_limpo = normalizar_isbn(isbn)
 
-    if len(isbn_limpo) not in (10, 13):
-        return {
-            "sucesso": False,
-            "erro": "O ISBN deve ter 10 ou 13 caracteres válidos.",
-        }
-
     dados_livro = None
     dados_pesquisa = None
 
     for variante in variantes_isbn(isbn_limpo):
-        if not dados_livro:
-            try:
-                dados_livro = _consultar_books_api(
-                    variante
-                )
-            except (
-                HTTPError,
-                URLError,
-                TimeoutError,
-                ValueError,
-            ):
-                dados_livro = None
+        try:
+            if not dados_livro:
+                dados_livro = _consultar_openlibrary_books(variante)
+        except (HTTPError, URLError, TimeoutError, ValueError, OSError):
+            pass
 
-        if not dados_pesquisa:
-            try:
-                dados_pesquisa = _consultar_search_api(
-                    variante
-                )
-            except (
-                HTTPError,
-                URLError,
-                TimeoutError,
-                ValueError,
-            ):
-                dados_pesquisa = None
+        try:
+            if not dados_pesquisa:
+                dados_pesquisa = _consultar_openlibrary_search(variante)
+        except (HTTPError, URLError, TimeoutError, ValueError, OSError):
+            pass
 
         if dados_livro or dados_pesquisa:
             break
@@ -352,16 +515,17 @@ def procurar_livro_open_library(isbn):
         autores = [
             autor.get("name")
             for autor in dados_livro.get("authors", [])
-            if autor.get("name")
+            if isinstance(autor, dict) and autor.get("name")
         ]
 
         editoras = dados_livro.get("publishers") or []
         if editoras:
             primeira = editoras[0]
-            if isinstance(primeira, dict):
-                editora = primeira.get("name")
-            else:
-                editora = str(primeira)
+            editora = (
+                primeira.get("name")
+                if isinstance(primeira, dict)
+                else str(primeira)
+            )
 
         data_publicacao = dados_livro.get("publish_date")
 
@@ -372,11 +536,8 @@ def procurar_livro_open_library(isbn):
         ]
 
     if dados_pesquisa:
-        if not titulo:
-            titulo = dados_pesquisa.get("title")
-
-        if not autores:
-            autores = dados_pesquisa.get("author_name") or []
+        titulo = titulo or dados_pesquisa.get("title")
+        autores = autores or (dados_pesquisa.get("author_name") or [])
 
         if not editora:
             editoras = dados_pesquisa.get("publisher") or []
@@ -388,29 +549,27 @@ def procurar_livro_open_library(isbn):
             if ano:
                 data_publicacao = str(ano)
 
-        assuntos_pesquisa = dados_pesquisa.get("subject") or []
-
-        nomes_existentes = {
-            str(genero).strip().lower()
+        existentes = {
+            _normalizar_texto(genero)
             for genero in generos
         }
 
-        for assunto in assuntos_pesquisa:
-            assunto_texto = str(assunto or "").strip()
+        for assunto in dados_pesquisa.get("subject") or []:
+            chave = _normalizar_texto(assunto)
+            if assunto and chave not in existentes:
+                generos.append(str(assunto))
+                existentes.add(chave)
 
-            if (
-                assunto_texto
-                and assunto_texto.lower() not in nomes_existentes
-            ):
-                generos.append(assunto_texto)
-                nomes_existentes.add(
-                    assunto_texto.lower()
-                )
+    if _titulo_invalido(titulo):
+        return {
+            "sucesso": False,
+            "erro": "Open Library devolveu um resultado inválido.",
+        }
 
     return {
         "sucesso": True,
         "origem": "Open Library API",
-        "titulo": titulo or "Sem título",
+        "titulo": titulo,
         "isbn": isbn_limpo,
         "autores": autores,
         "editora": editora,
@@ -419,24 +578,17 @@ def procurar_livro_open_library(isbn):
     }
 
 
+# Google Books
+
 
 def procurar_livro_google_books(isbn):
     isbn_limpo = normalizar_isbn(isbn)
-
-    if len(isbn_limpo) not in (10, 13):
-        return {
-            "sucesso": False,
-            "erro": "O ISBN deve ter 10 ou 13 caracteres válidos.",
-        }
-
     variantes = variantes_isbn(isbn_limpo)
-    consultas = []
 
+    consultas = []
     for variante in variantes:
         consultas.append(f"isbn:{variante}")
-
-    for variante in variantes:
-        consultas.append(variante)
+    consultas.extend(variantes)
 
     info_escolhida = None
 
@@ -446,49 +598,28 @@ def procurar_livro_google_books(isbn):
                 GOOGLE_BOOKS_VOLUMES_URL,
                 {
                     "q": consulta,
-                    "maxResults": 5,
+                    "maxResults": 10,
                     "printType": "books",
                 },
             )
-        except (
-            HTTPError,
-            URLError,
-            TimeoutError,
-            ValueError,
-        ):
+        except (HTTPError, URLError, TimeoutError, ValueError, OSError):
             continue
 
-        itens = dados.get("items") or []
-
-        if not itens:
-            continue
-
-        for item in itens:
+        for item in dados.get("items") or []:
             info = item.get("volumeInfo") or {}
             identificadores = info.get("industryIdentifiers") or []
 
             valores = {
-                normalizar_isbn(
-                    identificador.get("identifier")
-                )
+                normalizar_isbn(identificador.get("identifier"))
                 for identificador in identificadores
                 if identificador.get("identifier")
             }
 
-            if any(
-                variante in valores
-                for variante in variantes
-            ):
+            if any(variante in valores for variante in variantes):
                 info_escolhida = info
                 break
 
         if info_escolhida:
-            break
-
-        if itens:
-            info_escolhida = (
-                itens[0].get("volumeInfo") or {}
-            )
             break
 
     if not info_escolhida:
@@ -497,313 +628,1353 @@ def procurar_livro_google_books(isbn):
             "erro": "ISBN não encontrado na Google Books.",
         }
 
-    info = info_escolhida
-    identificadores = info.get("industryIdentifiers") or []
-    isbn_resultado = isbn_limpo
+    titulo = info_escolhida.get("title")
 
-    for identificador in identificadores:
-        valor = normalizar_isbn(
-            identificador.get("identifier")
-        )
-
-        if len(valor) == 13:
-            isbn_resultado = valor
-            break
-
-        if len(valor) == 10:
-            isbn_resultado = valor
+    if _titulo_invalido(titulo):
+        return {
+            "sucesso": False,
+            "erro": "Google Books devolveu um resultado inválido.",
+        }
 
     return {
         "sucesso": True,
         "origem": "Google Books API",
-        "titulo": info.get("title") or "Sem título",
-        "isbn": isbn_resultado,
-        "autores": info.get("authors") or [],
-        "editora": info.get("publisher"),
-        "data_publicacao": info.get("publishedDate"),
-        "generos": info.get("categories") or [],
+        "titulo": titulo,
+        "isbn": isbn_limpo,
+        "autores": info_escolhida.get("authors") or [],
+        "editora": info_escolhida.get("publisher"),
+        "data_publicacao": info_escolhida.get("publishedDate"),
+        "generos": info_escolhida.get("categories") or [],
     }
 
 
+# Parsing HTML / Markdown de catálogos web
 
-def procurar_livro_presenca(isbn):
-    isbn_limpo = normalizar_isbn(isbn)
 
-    if len(isbn_limpo) not in (10, 13):
-        return {
-            "sucesso": False,
-            "erro": "O ISBN deve ter 10 ou 13 caracteres válidos.",
+class _ExtratorTextoHTML(HTMLParser):
+    BLOCOS = {
+        "address", "article", "aside", "blockquote", "br", "dd", "div",
+        "dl", "dt", "figcaption", "figure", "footer", "form", "h1",
+        "h2", "h3", "h4", "h5", "h6", "header", "hr", "li", "main",
+        "nav", "ol", "p", "pre", "section", "table", "tbody", "td",
+        "tfoot", "th", "thead", "tr", "ul",
+    }
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.partes = []
+        self.ignorar = 0
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+
+        if tag in ("script", "style", "noscript"):
+            self.ignorar += 1
+        elif not self.ignorar and tag in self.BLOCOS:
+            self.partes.append("\n")
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+
+        if tag in ("script", "style", "noscript"):
+            self.ignorar = max(0, self.ignorar - 1)
+        elif not self.ignorar and tag in self.BLOCOS:
+            self.partes.append("\n")
+
+    def handle_data(self, data):
+        if not self.ignorar:
+            texto = str(data or "").strip()
+            if texto:
+                self.partes.append(texto)
+
+    def texto(self):
+        bruto = " ".join(self.partes)
+        bruto = re.sub(r"[ \t]+", " ", bruto)
+        bruto = re.sub(r" *\n *", "\n", bruto)
+        bruto = re.sub(r"\n{2,}", "\n", bruto)
+        return bruto.strip()
+
+
+class _ExtratorJSONLD(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.em_jsonld = False
+        self.buffer = []
+        self.blocos = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() != "script":
+            return
+
+        atributos = {
+            str(chave).lower(): str(valor or "")
+            for chave, valor in attrs
         }
 
-    links_produto = []
+        if "ld+json" in atributos.get("type", "").lower():
+            self.em_jsonld = True
+            self.buffer = []
 
-    try:
-        sugestoes = _obter_json(
-            PRESENCA_SUGGEST_URL,
-            {
-                "q": isbn_limpo,
-                "resources[type]": "product",
-                "resources[limit]": 10,
-            },
-        )
+    def handle_endtag(self, tag):
+        if tag.lower() == "script" and self.em_jsonld:
+            bloco = "".join(self.buffer).strip()
+            if bloco:
+                self.blocos.append(bloco)
+            self.em_jsonld = False
+            self.buffer = []
 
-        produtos = (
-            sugestoes
-            .get("resources", {})
-            .get("results", {})
-            .get("products", [])
-        )
+    def handle_data(self, data):
+        if self.em_jsonld:
+            self.buffer.append(data)
 
-        for produto in produtos:
-            url_produto = produto.get("url")
 
-            if url_produto:
-                links_produto.append(
-                    urljoin(
-                        PRESENCA_BASE_URL,
-                        url_produto,
-                    )
-                )
+def _html_para_texto(html):
+    parser = _ExtratorTextoHTML()
+    parser.feed(str(html or ""))
+    return parser.texto()
 
-    except (
-        HTTPError,
-        URLError,
-        TimeoutError,
-        ValueError,
-        json.JSONDecodeError,
-    ):
-        pass
 
-    if not links_produto:
+def _iterar_json(valor):
+    if isinstance(valor, dict):
+        yield valor
+        for subvalor in valor.values():
+            yield from _iterar_json(subvalor)
+    elif isinstance(valor, list):
+        for item in valor:
+            yield from _iterar_json(item)
+
+
+def _nomes_campo(valor):
+    if not valor:
+        return []
+
+    if isinstance(valor, str):
+        return [valor.strip()] if valor.strip() else []
+
+    if isinstance(valor, dict):
+        nome = valor.get("name") or valor.get("title")
+        return [str(nome).strip()] if nome else []
+
+    if isinstance(valor, list):
+        nomes = []
+        for item in valor:
+            nomes.extend(_nomes_campo(item))
+        return nomes
+
+    return []
+
+
+def _jsonld_livro(html, isbn):
+    if _conteudo_bloqueado(html):
+        return None
+
+    parser = _ExtratorJSONLD()
+    parser.feed(str(html or ""))
+
+    isbn_limpo = normalizar_isbn(isbn)
+    candidatos = []
+
+    for bloco in parser.blocos:
         try:
-            html_busca = _obter_texto(
-                PRESENCA_SEARCH_URL,
+            dados = json.loads(bloco)
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+        for objeto in _iterar_json(dados):
+            tipo = objeto.get("@type")
+
+            if isinstance(tipo, list):
+                tipos = {_normalizar_texto(item) for item in tipo}
+            else:
+                tipos = {_normalizar_texto(tipo)}
+
+            if not ({"book", "product"} & tipos):
+                continue
+
+            isbn_objeto = normalizar_isbn(
+                objeto.get("isbn")
+                or objeto.get("gtin13")
+                or objeto.get("gtin")
+                or objeto.get("sku")
+                or ""
+            )
+
+            if isbn_objeto and isbn_objeto != isbn_limpo:
+                continue
+
+            titulo = objeto.get("name") or objeto.get("headline")
+
+            if _titulo_invalido(titulo):
+                continue
+
+            autores = _nomes_campo(
+                objeto.get("author")
+                or objeto.get("creator")
+            )
+
+            editora_lista = _nomes_campo(
+                objeto.get("publisher")
+                or objeto.get("brand")
+            )
+            editora = editora_lista[0] if editora_lista else None
+
+            data_publicacao = (
+                objeto.get("datePublished")
+                or objeto.get("releaseDate")
+            )
+
+            categoria = (
+                objeto.get("genre")
+                or objeto.get("category")
+            )
+            generos = _nomes_campo(categoria)
+
+            candidatos.append(
                 {
-                    "q": isbn_limpo,
-                    "type": "product",
-                },
+                    "titulo": str(titulo).strip(),
+                    "autores": autores,
+                    "editora": editora,
+                    "data_publicacao": data_publicacao,
+                    "generos": generos,
+                }
             )
 
-            encontrados = re.findall(
-                r'href=["\']([^"\']*/products/[^"\'?#]+)["\']',
-                html_busca,
-                flags=re.I,
-            )
+    if not candidatos:
+        return None
 
-            for link in encontrados:
-                url_produto = urljoin(
-                    PRESENCA_BASE_URL,
-                    link,
-                )
+    candidatos.sort(
+        key=lambda item: _pontuar_metadados(item),
+        reverse=True,
+    )
 
-                if url_produto not in links_produto:
-                    links_produto.append(
-                        url_produto
-                    )
+    return candidatos[0]
 
-        except (
-            HTTPError,
-            URLError,
-            TimeoutError,
-            ValueError,
-        ):
-            pass
 
-    for url_produto in links_produto[:10]:
-        try:
-            pagina = _obter_texto(
-                url_produto
-            )
-        except (
-            HTTPError,
-            URLError,
-            TimeoutError,
-            ValueError,
-        ):
-            continue
+def _meta_html(html, propriedade):
+    padroes = [
+        rf'<meta[^>]+(?:property|name)=["\']{re.escape(propriedade)}["\'][^>]+content=["\']([^"\']+)["\']',
+        rf'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\']{re.escape(propriedade)}["\']',
+    ]
 
-        pagina_normalizada = normalizar_isbn(
-            pagina
-        )
+    for padrao in padroes:
+        encontrado = re.search(padrao, str(html or ""), flags=re.I)
+        if encontrado:
+            return unescape(encontrado.group(1)).strip()
 
-        if isbn_limpo not in pagina_normalizada:
-            continue
+    return None
 
-        h1 = re.search(
-            r"<h1[^>]*>(.*?)</h1>",
-            pagina,
-            flags=re.I | re.S,
-        )
 
-        titulo = (
-            _limpar_html(h1.group(1))
-            if h1
-            else None
-        )
+def _h1_html(html):
+    encontrado = re.search(
+        r"<h1[^>]*>(.*?)</h1>",
+        str(html or ""),
+        flags=re.I | re.S,
+    )
 
-        segmento_inicio = (
-            h1.start()
-            if h1
-            else 0
-        )
+    if not encontrado:
+        return None
 
-        segmento = pagina[
-            segmento_inicio:
-            segmento_inicio + 12000
+    texto = re.sub(r"<[^>]+>", " ", encontrado.group(1))
+    texto = unescape(re.sub(r"\s+", " ", texto)).strip()
+    return texto or None
+
+
+def _linha_valor(texto, rotulos):
+    texto = str(texto or "")
+
+    for rotulo in rotulos:
+        padroes = [
+            rf"(?im)^\s*{rotulo}\s*:?\s*\|\s*([^\n|]+)",
+            rf"(?im)^\s*{rotulo}\s*:?\s+([^\n]+)$",
+            rf"(?im)^\s*{rotulo}\s*:?\s*$\s*\n\s*([^\n]+)$",
         ]
 
-        autor_match = re.search(
-            r'href=["\'][^"\']*/blogs/autores/[^"\']+["\'][^>]*>(.*?)</a>',
-            segmento,
-            flags=re.I | re.S,
-        )
+        for padrao in padroes:
+            encontrado = re.search(padrao, texto)
+            if encontrado:
+                valor = encontrado.group(1).strip(" \t\n|:-")
+                valor = re.sub(r"\s+", " ", valor)
 
-        autores = []
+                if valor and valor not in {"-", "—"}:
+                    return valor
 
-        if autor_match:
-            autor = _limpar_html(
-                autor_match.group(1)
+    return None
+
+
+def _extrair_classificacao_tematica(texto):
+    """Extrai apenas a classificação do LIVRO.
+
+    Algumas páginas da WOOK/Bertrand colocam vários campos na mesma linha
+    depois de removermos o HTML. Se usarmos uma leitura genérica, o valor de
+    "Classificação Temática" pode acabar colado ao EAN, idade recomendada
+    ou texto do autor. Aqui limitamos explicitamente o valor ao campo seguinte.
+    """
+    texto = str(texto or "")
+
+    if not texto:
+        return None
+
+    limites = (
+        r"EAN",
+        r"ISBN",
+        r"Idade\s+M[ií]nima",
+        r"Tipo\s+de\s+produto",
+        r"P[aá]ginas",
+        r"Encaderna[cç][aã]o",
+        r"Dimens[oõ]es",
+        r"SOBRE\s+O\s+AUTOR",
+        r"OPINI[AÃ]O\s+DOS\s+LEITORES",
+        r"SINOPSE",
+    )
+    limite = "|".join(limites)
+
+    padroes = [
+        rf"(?is)Classifica[cç][aã]o\s+Tem[aá]tica\s*:?\s*(.+?)(?=\s*(?:{limite})\s*:|$)",
+        rf"(?is)Tem[aá]tica\s*:?\s*(.+?)(?=\s*(?:{limite})\s*:|$)",
+        rf"(?is)Categoria\s*:?\s*(.+?)(?=\s*(?:{limite})\s*:|$)",
+    ]
+
+    for padrao in padroes:
+        encontrado = re.search(padrao, texto)
+        if encontrado:
+            valor = re.sub(r"\s+", " ", encontrado.group(1)).strip(" |:-")
+            if valor:
+                return valor
+
+    # Fallback específico para a estrutura típica da WOOK/Bertrand.
+    encontrado = re.search(
+        r"(?is)(Livros\s+em\s+Portugu[eê]s\s*>\s*Literatura\s*>\s*[^\n|]+?)(?=\s*(?:EAN|ISBN|Idade\s+M[ií]nima|$))",
+        texto,
+    )
+    if encontrado:
+        return re.sub(r"\s+", " ", encontrado.group(1)).strip(" |:-")
+
+    return None
+
+
+def _normalizar_data_catalogo(valor):
+    if not valor:
+        return None
+
+    texto_original = str(valor).strip()
+    texto = _normalizar_texto(texto_original)
+
+    # AAAA-MM-DD / AAAA-MM
+    encontrado = re.search(r"\b(19\d{2}|20\d{2})[-/.](0?[1-9]|1[0-2])(?:[-/.](0?[1-9]|[12]\d|3[01]))?\b", texto)
+    if encontrado:
+        ano = int(encontrado.group(1))
+        mes = int(encontrado.group(2))
+        dia = int(encontrado.group(3) or 1)
+        return f"{ano:04d}-{mes:02d}-{dia:02d}"
+
+    # MM-AAAA / MM/AAAA
+    encontrado = re.search(r"\b(0?[1-9]|1[0-2])[-/.](19\d{2}|20\d{2})\b", texto)
+    if encontrado:
+        mes = int(encontrado.group(1))
+        ano = int(encontrado.group(2))
+        return f"{ano:04d}-{mes:02d}-01"
+
+    # agosto de 2025 / August of 2025 / agosto 2025
+    for nome_mes, numero_mes in MESES.items():
+        if re.search(
+            rf"\b{re.escape(nome_mes)}\b(?:\s+(?:de|of))?\s+(19\d{{2}}|20\d{{2}})\b",
+            texto,
+        ):
+            ano = int(
+                re.search(
+                    rf"\b{re.escape(nome_mes)}\b(?:\s+(?:de|of))?\s+(19\d{{2}}|20\d{{2}})\b",
+                    texto,
+                ).group(1)
             )
+            return f"{ano:04d}-{numero_mes:02d}-01"
 
-            if autor:
-                autores.append(
-                    autor
-                )
+    # Só ano.
+    encontrado = re.search(r"\b(19\d{2}|20\d{2})\b", texto)
+    if encontrado:
+        return f"{int(encontrado.group(1)):04d}-01-01"
 
-        vendor_match = re.search(
-            r'"vendor"\s*:\s*"([^"]+)"',
-            pagina,
-            flags=re.I,
-        )
+    return texto_original
 
-        editora = (
-            html_lib.unescape(
-                vendor_match.group(1)
-            ).strip()
-            if vendor_match
-            else None
-        )
 
-        texto_produto = _limpar_html(
-            segmento
-        )
+def _generos_da_classificacao(valor):
+    if not valor:
+        return []
 
-        data_match = re.search(
-            (
-                r"Data\s+de\s+Lançamento\s+"
-                r"([0-9]{1,2}/[0-9]{4}|"
-                r"[A-Za-zÀ-ÿ]+\s+[0-9]{4}|"
-                r"[0-9]{4})"
-            ),
-            texto_produto,
-            flags=re.I,
-        )
+    texto = str(valor)
+    texto = re.sub(r"<[^>]+>", " > ", texto)
+    texto = unescape(texto)
+    texto = re.sub(r"\s+", " ", texto).strip()
 
-        data_publicacao = (
-            data_match.group(1)
-            if data_match
-            else None
-        )
+    partes = [
+        parte.strip(" .,:;|-_")
+        for parte in re.split(r">|›|»|/|\\|\|", texto)
+        if parte.strip(" .,:;|-_")
+    ]
 
-        generos = []
+    ignorar = {
+        "livros",
+        "livros em portugues",
+        "literatura",
+        "books",
+        "books in portuguese",
+        "fiction",
+        "ficcao",
+    }
 
-        categoria_match = re.search(
-            r"Categoria\s+(.+?)\s+Sub-categoria",
-            texto_produto,
-            flags=re.I,
-        )
+    aliases = [
+        ("Realismo Mágico", ("realismo magico", "magical realism", "magic realism")),
+        ("Ficção Científica", ("ficcao cientifica", "science fiction", "sci fi")),
+        ("Autoajuda", ("autoajuda", "self help", "personal development")),
+        ("Distopia", ("distopia", "dystopia", "dystopian")),
+        ("Policial", ("policial", "crime fiction", "detective fiction", "mystery fiction")),
+        ("Poesia", ("poesia", "poetry", "poems")),
+        ("Fantasia", ("fantasia", "fantasy")),
+        ("Terror", ("terror", "horror")),
+        ("Suspense", ("suspense", "thriller")),
+        ("Biografia", ("biografia", "biography", "autobiography", "memoir")),
+        ("Infantil", ("infantil", "juvenile fiction", "children fiction", "children s fiction")),
+        ("Aventura", ("aventura", "adventure")),
+        ("Romance", ("romance", "romantic fiction", "love stories")),
+        ("Ficção", ("ficcao", "fiction", "novel")),
+    ]
 
-        if categoria_match:
-            categoria = (
-                categoria_match
-                .group(1)
-                .strip(" -")
-            )
+    encontrados = []
 
-            if categoria:
-                generos.append(
-                    categoria
-                )
+    for parte in partes:
+        normalizada = _normalizar_texto(parte)
 
-        subcategoria_match = re.search(
-            r"Sub-categoria\s+(.+?)\s+Série",
-            texto_produto,
-            flags=re.I,
-        )
-
-        if subcategoria_match:
-            subcategoria = (
-                subcategoria_match
-                .group(1)
-                .strip(" -")
-            )
-
-            if subcategoria:
-                generos.append(
-                    subcategoria
-                )
-
-        if not titulo:
+        if not normalizada or normalizada in ignorar:
             continue
 
-        return {
+        for nome, termos in aliases:
+            if any(
+                normalizada == termo
+                or normalizada.startswith(termo + " ")
+                or normalizada.endswith(" " + termo)
+                for termo in termos
+            ):
+                if nome not in encontrados:
+                    encontrados.append(nome)
+                break
+
+    if encontrados:
+        return encontrados[:3]
+
+    normalizado = _normalizar_texto(texto)
+
+    for nome, termos in aliases:
+        if any(re.search(rf"\b{re.escape(termo)}\b", normalizado) for termo in termos):
+            return [nome]
+
+    return []
+
+
+def _generos_da_ficha(texto, classificacao=None, html=None):
+    generos = _generos_da_classificacao(classificacao)
+
+    if generos:
+        return generos
+
+    fontes = [str(texto or "")]
+
+    if html:
+        fontes.append(str(html))
+
+    marcadores = [
+        r"Classifica[cç][aã]o\s+Tem[aá]tica",
+        r"Classifica[cç][aã]o\s+Tematica",
+        r"Tem[aá]tica",
+        r"Categoria",
+    ]
+
+    for fonte in fontes:
+        if not fonte:
+            continue
+
+        for marcador in marcadores:
+            encontrado = re.search(marcador, fonte, flags=re.I)
+
+            if not encontrado:
+                continue
+
+            trecho = fonte[encontrado.start():encontrado.start() + 5000]
+            trecho = re.split(
+                r"(?i)(?:EAN|ISBN|Idade\s+M[ií]nima|OPINI[AÃ]O\s+DOS\s+LEITORES|SOBRE\s+O\s+AUTOR)",
+                trecho,
+                maxsplit=1,
+            )[0]
+
+            if "<" in trecho and ">" in trecho:
+                trecho = _html_para_texto(trecho)
+
+            generos = _generos_da_classificacao(trecho)
+
+            if generos:
+                return generos
+
+    return []
+
+def _autor_perto_titulo(texto, titulo):
+    if not texto or not titulo:
+        return []
+
+    indice = _normalizar_texto(texto).find(_normalizar_texto(titulo))
+
+    if indice < 0:
+        trecho = str(texto)[:1000]
+    else:
+        trecho = str(texto)[max(0, indice - 100):indice + 900]
+
+    padroes = [
+        r"(?im)^\s*de\s+([^\n|]{2,100})$",
+        r"(?im)^\s*by\s+([^\n|]{2,100})$",
+        rf"(?im){re.escape(titulo)}\s+(?:de|by)\s+([^\n|]{{2,100}})",
+    ]
+
+    for padrao in padroes:
+        encontrado = re.search(padrao, trecho, flags=re.I)
+        if encontrado:
+            autor = encontrado.group(1).strip(" .|-#")
+
+            # Evita capturar descrições enormes.
+            if 2 <= len(autor) <= 100:
+                return [autor]
+
+    return []
+
+
+def _remover_creditos_nao_autor(autores, texto):
+    if not autores:
+        return []
+
+    excluidos = set()
+
+    for rotulo in (
+        r"Pref[aá]cio",
+        r"Foreword",
+        r"Tradu[cç][aã]o",
+        r"Translator",
+        r"Tradutor(?:a)?",
+        r"Ilustra[cç][aã]o",
+    ):
+        valor = _linha_valor(texto, [rotulo])
+
+        if valor:
+            for nome in re.split(r"\s*[;,]\s*|\s+e\s+|\s+and\s+", valor):
+                nome = nome.strip()
+                if nome:
+                    excluidos.add(_normalizar_texto(nome))
+
+    resultado = []
+    vistos = set()
+
+    for autor in autores:
+        nome = str(autor or "").strip()
+        chave = _normalizar_texto(nome)
+
+        if (
+            nome
+            and chave not in excluidos
+            and chave not in vistos
+            and not any(
+                palavra in chave
+                for palavra in (
+                    "prefacio",
+                    "traducao",
+                    "translator",
+                    "foreword",
+                )
+            )
+        ):
+            vistos.add(chave)
+            resultado.append(nome)
+
+    return resultado
+
+
+def _pontuar_metadados(dados):
+    if not dados:
+        return -100
+
+    if _titulo_invalido(dados.get("titulo")):
+        return -100
+
+    pontos = 5
+
+    if dados.get("autores"):
+        pontos += 4
+    if dados.get("editora"):
+        pontos += 2
+    if dados.get("data_publicacao"):
+        pontos += 2
+    if dados.get("generos"):
+        pontos += 1
+
+    return pontos
+
+
+def _resultado_web_valido(dados):
+    if not dados:
+        return False
+
+    if _titulo_invalido(dados.get("titulo")):
+        return False
+
+    # Um título sozinho não chega. Exigimos pelo menos autor ou editora,
+    # evitando tratar uma página Cloudflare/pesquisa como livro real.
+    if not dados.get("autores") and not dados.get("editora"):
+        return False
+
+    return _pontuar_metadados(dados) >= 9
+
+
+def _extrair_dados_texto(texto, url, isbn, origem="Pesquisa Web"):
+    texto = str(texto or "")
+    isbn_limpo = normalizar_isbn(isbn)
+
+    if not texto or _conteudo_bloqueado(texto):
+        return None
+
+    # A ficha só é aceite se contiver realmente o ISBN pesquisado.
+    texto_isbn = re.sub(r"[^0-9Xx]", "", texto).upper()
+    if isbn_limpo not in texto_isbn:
+        return None
+
+    titulo = _linha_valor(texto, [r"T[ií]tulo", "Title"])
+
+    if not titulo:
+        for candidato in re.findall(r"(?im)^#\s+(.+?)\s*$", texto):
+            candidato = candidato.strip(" #|")
+            if not _titulo_invalido(candidato) and len(candidato) <= 180:
+                titulo = candidato
+                break
+
+    autores_titulo = []
+
+    if titulo:
+        titulo = re.sub(r"\s*[-|]\s*(?:WOOK|Bertrand|FNAC).*?$", "", titulo, flags=re.I).strip()
+        titulo = re.sub(r"\s+(?:by|de)\s+[^|]{2,100}\s*[-|].*$", "", titulo, flags=re.I).strip()
+
+        # WOOK costuma usar um H1 do tipo:
+        # "A História de Uma Serva de Margaret Atwood".
+        # A expressão é gananciosa para separar no ÚLTIMO " de ",
+        # preservando títulos que já contenham a palavra "de".
+        combinado = re.match(
+            r"^(.+)\s+(?:de|by)\s+([A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][^|#]{1,100})$",
+            titulo,
+            flags=re.I,
+        )
+        if combinado:
+            titulo_candidato = combinado.group(1).strip()
+            autor_candidato = combinado.group(2).strip(" .-|")
+            palavras_autor = [p for p in autor_candidato.split() if p]
+
+            if 1 <= len(palavras_autor) <= 8:
+                titulo = titulo_candidato
+                autores_titulo = [autor_candidato]
+
+    autores = []
+
+    autor_campo = _linha_valor(
+        texto,
+        [r"Autor(?:\(es\))?", "Author"],
+    )
+
+    if autor_campo:
+        autores = [
+            parte.strip()
+            for parte in re.split(r"\s*[;,]\s*|\s+e\s+|\s+and\s+", autor_campo)
+            if parte.strip()
+        ]
+
+    if not autores and autores_titulo:
+        autores = autores_titulo
+
+    if not autores:
+        autores = _autor_perto_titulo(texto, titulo)
+
+    autores = _remover_creditos_nao_autor(autores, texto)
+
+    editora = _linha_valor(
+        texto,
+        ["Editor", "Editora", "Publisher"],
+    )
+
+    data_publicacao = _linha_valor(
+        texto,
+        [
+            r"Data de publica[cç][aã]o",
+            r"Data de Lan[cç]amento",
+            r"Edi[cç][aã]o/reimpress[aã]o",
+            r"Ano de edi[cç][aã]o",
+            r"Release Date",
+        ],
+    )
+    data_publicacao = _normalizar_data_catalogo(data_publicacao)
+
+    classificacao = _extrair_classificacao_tematica(texto)
+
+    if not classificacao:
+        classificacao = _linha_valor(
+            texto,
+            [
+                r"Classifica[cç][aã]o Tem[aá]tica",
+                "Temática",
+                "Tematica",
+                "Categoria",
+                "Categories",
+            ],
+        )
+
+    generos = _generos_da_ficha(
+        texto,
+        classificacao=classificacao,
+    )
+
+    dados = {
+        "sucesso": True,
+        "origem": origem,
+        "titulo": titulo,
+        "isbn": isbn_limpo,
+        "autores": autores,
+        "editora": editora,
+        "data_publicacao": data_publicacao,
+        "generos": generos,
+        "url_origem": url,
+    }
+
+    return dados if _resultado_web_valido(dados) else None
+
+
+def _extrair_dados_html(html, url, isbn, origem="Pesquisa Web"):
+    html = str(html or "")
+
+    if not html or _conteudo_bloqueado(html):
+        return None
+
+    isbn_limpo = normalizar_isbn(isbn)
+    html_isbn = re.sub(r"[^0-9Xx]", "", html).upper()
+
+    if isbn_limpo not in html_isbn:
+        return None
+
+    jsonld = _jsonld_livro(html, isbn_limpo)
+    texto_pagina = _html_para_texto(html)
+
+    dados_texto = _extrair_dados_texto(
+        texto_pagina,
+        url,
+        isbn_limpo,
+        origem,
+    )
+
+    if jsonld:
+        titulo = jsonld.get("titulo")
+        autores = _remover_creditos_nao_autor(
+            jsonld.get("autores") or [],
+            texto_pagina,
+        )
+        editora = jsonld.get("editora")
+        data_publicacao = _normalizar_data_catalogo(
+            jsonld.get("data_publicacao")
+        )
+        generos = []
+
+        for genero in jsonld.get("generos") or []:
+            generos.extend(_generos_da_classificacao(genero) or [genero])
+
+        if not generos:
+            generos = _generos_da_ficha(
+                texto_pagina,
+                html=html,
+            )
+
+        dados_json = {
             "sucesso": True,
-            "origem": "Catálogo Editorial Presença",
+            "origem": origem,
             "titulo": titulo,
             "isbn": isbn_limpo,
             "autores": autores,
             "editora": editora,
             "data_publicacao": data_publicacao,
             "generos": generos,
+            "url_origem": url,
         }
 
-    return {
-        "sucesso": False,
-        "erro": (
-            "ISBN não encontrado no catálogo editorial adicional."
+        if dados_texto:
+            # Completa JSON-LD apenas com campos vazios; nunca mistura autores
+            # adicionais encontrados numa biografia mais abaixo da página.
+            for campo in ("autores", "editora", "data_publicacao", "generos"):
+                if not dados_json.get(campo) and dados_texto.get(campo):
+                    dados_json[campo] = dados_texto[campo]
+
+        if _resultado_web_valido(dados_json):
+            return dados_json
+
+    # Fallback normal de texto da própria ficha.
+    if dados_texto:
+        return dados_texto
+
+    # Último fallback: título de OpenGraph/H1 + campos rotulados.
+    titulo = _meta_html(html, "og:title") or _h1_html(html)
+
+    if titulo:
+        titulo = re.sub(r"\s*[-|]\s*(?:WOOK|Bertrand|FNAC).*?$", "", titulo, flags=re.I).strip()
+
+    autores = _autor_perto_titulo(texto_pagina, titulo)
+    autores = _remover_creditos_nao_autor(autores, texto_pagina)
+
+    editora = _linha_valor(
+        texto_pagina,
+        ["Editor", "Editora", "Publisher"],
+    )
+
+    data_publicacao = _normalizar_data_catalogo(
+        _linha_valor(
+            texto_pagina,
+            [
+                r"Data de publica[cç][aã]o",
+                r"Data de Lan[cç]amento",
+                r"Edi[cç][aã]o/reimpress[aã]o",
+            ],
+        )
+    )
+
+    classificacao = _extrair_classificacao_tematica(texto_pagina)
+
+    if not classificacao:
+        classificacao = _linha_valor(
+            texto_pagina,
+            [r"Classifica[cç][aã]o Tem[aá]tica", "Temática", "Categoria", "Categories"],
+        )
+
+    dados = {
+        "sucesso": True,
+        "origem": origem,
+        "titulo": titulo,
+        "isbn": isbn_limpo,
+        "autores": autores,
+        "editora": editora,
+        "data_publicacao": data_publicacao,
+        "generos": _generos_da_ficha(
+            texto_pagina,
+            classificacao=classificacao,
+            html=html,
         ),
+        "url_origem": url,
     }
 
-def procurar_livro(isbn):
-    isbn_limpo = normalizar_isbn(isbn)
+    return dados if _resultado_web_valido(dados) else None
 
-    if len(isbn_limpo) not in (10, 13):
+
+# Descoberta de páginas por ISBN
+
+
+def _extrair_links_html(html, base_url):
+    links = []
+    vistos = set()
+
+    for href in re.findall(
+        r"href\s*=\s*[\"']([^\"']+)[\"']",
+        str(html or ""),
+        flags=re.I,
+    ):
+        href = unescape(href).strip()
+
+        if not href or href.startswith(("#", "javascript:", "mailto:")):
+            continue
+
+        absoluto = urljoin(base_url, href)
+
+        # DuckDuckGo redireciona através de uddg=URL.
+        if "duckduckgo.com/l/?" in absoluto:
+            parametros = parse_qs(urlparse(absoluto).query)
+            destino = parametros.get("uddg")
+            if destino:
+                absoluto = unquote(destino[0])
+
+        if absoluto not in vistos:
+            vistos.add(absoluto)
+            links.append(absoluto)
+
+    return links
+
+
+def _extrair_links_markdown(texto):
+    links = []
+    vistos = set()
+
+    padroes = [
+        r"\[[^\]]*\]\((https?://[^)\s]+)",
+        r"https?://[^\s<>()\]\[\"']+",
+    ]
+
+    for padrao in padroes:
+        for bruto in re.findall(padrao, str(texto or "")):
+            link = unescape(bruto).strip().rstrip(".,;:")
+
+            if link and link not in vistos:
+                vistos.add(link)
+                links.append(link)
+
+    return links
+
+
+def _links_google(html):
+    links = []
+
+    for bruto in re.findall(
+        r'href=["\']/url\?q=(https?://[^&"\']+)',
+        str(html or ""),
+        flags=re.I,
+    ):
+        links.append(unquote(bruto))
+
+    # Algumas versões do Google expõem diretamente o href.
+    links.extend(_extrair_links_html(html, "https://www.google.com/"))
+
+    return links
+
+
+def _links_bing(html):
+    links = []
+
+    for padrao in (
+        r'<li[^>]*class=["\'][^"\']*\bb_algo\b[^"\']*["\'][^>]*>.*?<a[^>]+href=["\'](https?://[^"\']+)["\']',
+        r'<h2[^>]*>\s*<a[^>]+href=["\'](https?://[^"\']+)["\']',
+    ):
+        links.extend(
+            re.findall(
+                padrao,
+                str(html or ""),
+                flags=re.I | re.S,
+            )
+        )
+
+    return links
+
+
+def _links_duckduckgo(html):
+    return _extrair_links_html(
+        html,
+        "https://html.duckduckgo.com/",
+    )
+
+
+def _recolher_links_url(url):
+    links = []
+    vistos = set()
+    marcadores_produto = (
+        "/livro/",
+        "/produtos/ficha/",
+        "/product/",
+        "/produto/",
+        "/livros/",
+    )
+
+    def adicionar(link):
+        if not link or link in vistos:
+            return
+        if not _dominio_confiavel(link):
+            return
+        caminho = urlparse(link).path.lower()
+        if not any(marcador in caminho for marcador in marcadores_produto):
+            return
+        vistos.add(link)
+        links.append(link)
+
+    try:
+        html, url_final = _obter_html(url)
+
+        if not _conteudo_bloqueado(html):
+            for link in _extrair_links_html(html, url_final):
+                adicionar(link)
+                if len(links) >= 40:
+                    break
+    except Exception:
+        pass
+
+    # Para páginas de pesquisa bloqueadas, tenta o Reader.
+    if not links:
+        try:
+            markdown = _obter_texto_reader(url)
+
+            if not _conteudo_bloqueado(markdown):
+                for link in _extrair_links_markdown(markdown):
+                    adicionar(link)
+                    if len(links) >= 40:
+                        break
+        except Exception:
+            pass
+
+    return links
+
+
+def _pesquisar_google(isbn):
+    consulta = (
+        f'"{isbn}" '
+        "(site:wook.pt OR site:bertrand.pt OR site:bertrandeditora.pt "
+        "OR site:fnac.pt OR site:continente.pt OR site:arquivolivraria.pt)"
+    )
+
+    url = "https://www.google.com/search?" + urlencode(
+        {
+            "q": consulta,
+            "hl": "pt-PT",
+            "num": 10,
+        }
+    )
+
+    try:
+        html, _ = _obter_html(url)
+        if _conteudo_bloqueado(html):
+            return []
+        return _links_google(html)
+    except Exception:
+        return []
+
+
+def _pesquisar_bing(isbn):
+    consulta = (
+        f'"{isbn}" '
+        "(site:wook.pt OR site:bertrand.pt OR site:bertrandeditora.pt "
+        "OR site:fnac.pt OR site:continente.pt OR site:arquivolivraria.pt)"
+    )
+
+    url = "https://www.bing.com/search?" + urlencode(
+        {
+            "q": consulta,
+            "count": 10,
+            "setlang": "pt-PT",
+        }
+    )
+
+    try:
+        html, _ = _obter_html(url)
+        if _conteudo_bloqueado(html):
+            return []
+        return _links_bing(html)
+    except Exception:
+        return []
+
+
+def _pesquisar_duckduckgo(isbn):
+    consulta = f'"{isbn}" livro'
+    url = "https://html.duckduckgo.com/html/?" + urlencode({"q": consulta})
+
+    try:
+        html, _ = _obter_html(url)
+        if _conteudo_bloqueado(html):
+            return []
+        return _links_duckduckgo(html)
+    except Exception:
+        return []
+
+
+def _descobrir_links_produto(isbn):
+    isbn_limpo = normalizar_isbn(isbn)
+    encontrados = []
+    vistos = set()
+
+    # Primeiro pesquisa diretamente nas lojas; normalmente isto é mais rápido
+    # e reduz dependência de motores de pesquisa.
+    pesquisas_lojas = [
+        "https://www.wook.pt/pesquisa?" + urlencode({"keyword": isbn_limpo}),
+        "https://www.bertrand.pt/pesquisa/" + quote(isbn_limpo, safe=""),
+    ]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futuros = [
+            executor.submit(_recolher_links_url, url)
+            for url in pesquisas_lojas
+        ]
+
+        for futuro in as_completed(futuros):
+            try:
+                links = futuro.result()
+            except Exception:
+                links = []
+
+            for link in links:
+                if _dominio_confiavel(link) and link not in vistos:
+                    vistos.add(link)
+                    encontrados.append(link)
+
+    # Motores em paralelo. Mesmo que a loja tenha encontrado algo, juntamos
+    # alternativas para podermos ignorar uma página Cloudflare e usar outra.
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futuros = [
+            executor.submit(_pesquisar_google, isbn_limpo),
+            executor.submit(_pesquisar_bing, isbn_limpo),
+            executor.submit(_pesquisar_duckduckgo, isbn_limpo),
+        ]
+
+        for futuro in as_completed(futuros):
+            try:
+                links = futuro.result()
+            except Exception:
+                links = []
+
+            for link in links:
+                if _dominio_confiavel(link) and link not in vistos:
+                    vistos.add(link)
+                    encontrados.append(link)
+
+    # Prioriza URLs que parecem fichas de produto.
+    marcadores_produto = (
+        "/livro/",
+        "/produtos/ficha/",
+        "/product/",
+        "/produto/",
+        "/livros/",
+    )
+
+    produtos = [
+        link
+        for link in encontrados
+        if any(
+            marcador in urlparse(link).path.lower()
+            for marcador in marcadores_produto
+        )
+    ]
+
+    outros = [
+        link
+        for link in encontrados
+        if link not in produtos
+    ]
+
+    produtos.sort(key=_prioridade_dominio)
+    outros.sort(key=_prioridade_dominio)
+
+    return produtos + outros
+
+
+# Leitura e pesquisa web
+
+
+def _ler_candidato_web(url, isbn):
+    isbn_limpo = normalizar_isbn(isbn)
+    print(f"[BookCatalog] A testar página: {url}")
+
+    # 1) HTML normal.
+    try:
+        html, url_final = _obter_html(url)
+
+        if _conteudo_bloqueado(html):
+            print("[BookCatalog] Página HTML bloqueada/Cloudflare. A tentar Reader...")
+        else:
+            dados = _extrair_dados_html(
+                html,
+                url_final,
+                isbn_limpo,
+                "Pesquisa Web",
+            )
+
+            if dados:
+                print(f"[BookCatalog] Ficha válida encontrada por HTML: {url_final}")
+                return dados
+    except Exception as erro:
+        print(f"[BookCatalog] HTML direto falhou: {erro}")
+
+    # 2) Jina Reader. Este caminho só é aceite se devolver uma ficha real;
+    # páginas 'Attention Required | Cloudflare' são rejeitadas acima.
+    try:
+        markdown = _obter_texto_reader(url)
+
+        if _conteudo_bloqueado(markdown):
+            print("[BookCatalog] Reader também recebeu página bloqueada. Ignorada.")
+            return None
+
+        dados = _extrair_dados_texto(
+            markdown,
+            url,
+            isbn_limpo,
+            "Pesquisa Web",
+        )
+
+        if dados:
+            print(f"[BookCatalog] Ficha válida encontrada pelo Reader: {url}")
+            return dados
+    except Exception as erro:
+        print(f"[BookCatalog] Reader falhou: {erro}")
+
+    return None
+
+
+def procurar_livro_pesquisa_web(isbn):
+    isbn_limpo = normalizar_isbn(isbn)
+    links = _descobrir_links_produto(isbn_limpo)
+
+    print(
+        f"[BookCatalog] Pesquisa web encontrou "
+        f"{len(links)} link(s) candidato(s)."
+    )
+
+    if not links:
         return {
             "sucesso": False,
-            "erro": "O ISBN deve ter 10 ou 13 caracteres válidos.",
+            "erro": "Nenhuma página de produto foi encontrada na pesquisa web.",
         }
 
-    local = procurar_livro_local(
-        isbn_limpo
+    # Evita abrir dezenas de páginas. Se uma fonte estiver bloqueada, ainda há
+    # alternativas suficientes para escolher uma ficha correta.
+    candidatos = links[:5]
+    resultados = []
+
+    with ThreadPoolExecutor(max_workers=min(4, len(candidatos))) as executor:
+        futuros = {
+            executor.submit(_ler_candidato_web, link, isbn_limpo): link
+            for link in candidatos
+        }
+
+        for futuro in as_completed(futuros):
+            link = futuros[futuro]
+
+            try:
+                dados = futuro.result()
+            except Exception as erro:
+                print(f"[BookCatalog] Erro ao ler {link}: {erro}")
+                dados = None
+
+            if dados:
+                resultados.append(dados)
+
+    if not resultados:
+        return {
+            "sucesso": False,
+            "erro": "As páginas encontradas não continham uma ficha bibliográfica válida.",
+        }
+
+    # Escolhe a ficha com mais metadados. Em empate, prefere WOOK/Bertrand.
+    resultados.sort(
+        key=lambda item: (
+            _pontuar_metadados(item),
+            -_prioridade_dominio(item.get("url_origem") or ""),
+        ),
+        reverse=True,
     )
 
-    if local:
-        return local
+    melhor = resultados[0]
 
-    externo = procurar_livro_open_library(
-        isbn_limpo
+    print(
+        "[BookCatalog] Melhor ficha web: "
+        f"{melhor.get('url_origem')} | "
+        f"título={melhor.get('titulo')!r} | "
+        f"autor={melhor.get('autores')!r}"
     )
 
-    if externo.get("sucesso"):
-        return externo
+    return melhor
 
-    google = procurar_livro_google_books(
-        isbn_limpo
+
+# Fluxo final usado pelo SABIN
+
+
+def _consultar_apis_em_paralelo(isbn_limpo):
+    tarefas = {
+        "Google Books": procurar_livro_google_books,
+        "Open Library": procurar_livro_open_library,
+    }
+
+    resultados = {}
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futuros = {
+            executor.submit(funcao, isbn_limpo): nome
+            for nome, funcao in tarefas.items()
+        }
+
+        for futuro in as_completed(futuros):
+            nome = futuros[futuro]
+
+            try:
+                resultado = futuro.result()
+            except Exception as erro:
+                print(f"[BookCatalog] {nome}: erro: {erro}")
+                resultado = {"sucesso": False}
+
+            resultados[nome] = resultado
+
+            print(
+                f"[BookCatalog] {nome}: "
+                f"{'encontrado' if resultado.get('sucesso') else 'não encontrado'}."
+            )
+
+    # Google Books primeiro porque normalmente contém metadados da edição.
+    for nome in ("Google Books", "Open Library"):
+        resultado = resultados.get(nome) or {}
+        if resultado.get("sucesso"):
+            return resultado
+
+    return None
+
+
+@lru_cache(maxsize=256)
+def _procurar_externo_cacheado(isbn_limpo):
+    resultado_api = _consultar_apis_em_paralelo(isbn_limpo)
+
+    if resultado_api:
+        return resultado_api
+
+    print("[BookCatalog] APIs sem resultado. A iniciar pesquisa web...")
+
+    resultado_web = procurar_livro_pesquisa_web(isbn_limpo)
+
+    print(
+        "[BookCatalog] Pesquisa Web: "
+        f"{'encontrado' if resultado_web.get('sucesso') else 'não encontrado'}."
     )
 
-    if google.get("sucesso"):
-        return google
-
-    presenca = procurar_livro_presenca(
-        isbn_limpo
-    )
-
-    if presenca.get("sucesso"):
-        return presenca
+    if resultado_web.get("sucesso"):
+        return resultado_web
 
     return {
         "sucesso": False,
         "erro": (
-            "ISBN não encontrado nas fontes externas consultadas."
+            "ISBN não encontrado na Google Books, Open Library "
+            "nem numa ficha bibliográfica web válida."
         ),
     }
+
+
+def procurar_livro(isbn):
+    """
+    Pesquisa usada pelo SABIN.
+
+    Ordem:
+      1. Base de dados local da Bookmarked;
+      2. Google Books + Open Library em paralelo;
+      3. Pesquisa web em lojas/livrarias conhecidas;
+      4. Páginas bloqueadas por Cloudflare são ignoradas, nunca usadas como livro.
+    """
+    isbn_limpo = normalizar_isbn(isbn)
+
+    if not _isbn_valido(isbn_limpo):
+        return {
+            "sucesso": False,
+            "erro": "O ISBN indicado não é válido.",
+        }
+
+    print(f"[BookCatalog] A procurar ISBN {isbn_limpo}...")
+
+    local = procurar_livro_local(isbn_limpo)
+
+    if local:
+        print("[BookCatalog] Base local: encontrado.")
+        return local
+
+    print(
+        "[BookCatalog] Base local: não encontrado. "
+        "A consultar fontes externas..."
+    )
+
+    resultado = _procurar_externo_cacheado(isbn_limpo)
+
+    # Cópia defensiva: a cache não deve ser alterada pelo app.
+    copia = dict(resultado)
+
+    for campo in ("autores", "generos"):
+        if isinstance(copia.get(campo), list):
+            copia[campo] = list(copia[campo])
+
+    return copia
