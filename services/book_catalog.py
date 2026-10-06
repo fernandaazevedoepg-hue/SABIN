@@ -10,6 +10,12 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, unquote, urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
 
+from ddgs import DDGS
+
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 
@@ -32,7 +38,7 @@ OPEN_LIBRARY_BOOKS_URL = "https://openlibrary.org/api/books"
 OPEN_LIBRARY_SEARCH_URL = "https://openlibrary.org/search.json"
 GOOGLE_BOOKS_VOLUMES_URL = "https://www.googleapis.com/books/v1/volumes"
 
-HTTP_TIMEOUT_CURTO = 4
+HTTP_TIMEOUT_CURTO = 12
 HTTP_TIMEOUT_READER = 9
 
 USER_AGENT = (
@@ -41,14 +47,74 @@ USER_AGENT = (
     "Chrome/154.0.0.0 Safari/537.36"
 )
 
-DOMINIOS_CONFIAVEIS = (
-    "wook.pt",
-    "bertrand.pt",
-    "bertrandeditora.pt",
-    "fnac.pt",
-    "continente.pt",
-    "arquivolivraria.pt",
+
+HTTP_SESSION = requests.Session()
+HTTP_SESSION.headers.update(
+    {
+        "User-Agent": USER_AGENT,
+        "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.8",
+        "Cache-Control": "no-cache",
+    }
 )
+
+_retry = Retry(
+    total=2,
+    connect=2,
+    read=2,
+    backoff_factor=0.5,
+    status_forcelist=[429, 500, 502, 503, 504],
+    allowed_methods=frozenset(["GET"]),
+)
+
+HTTP_SESSION.mount(
+    "https://",
+    HTTPAdapter(max_retries=_retry),
+)
+HTTP_SESSION.mount(
+    "http://",
+    HTTPAdapter(max_retries=_retry),
+)
+
+DOMINIOS_BLOQUEADOS_PESQUISA = (
+    "google.com",
+    "www.google.com",
+    "bing.com",
+    "www.bing.com",
+    "duckduckgo.com",
+    "html.duckduckgo.com",
+    "youtube.com",
+    "www.youtube.com",
+    "youtu.be",
+    "facebook.com",
+    "www.facebook.com",
+    "instagram.com",
+    "www.instagram.com",
+    "tiktok.com",
+    "www.tiktok.com",
+    "x.com",
+    "www.x.com",
+    "twitter.com",
+    "www.twitter.com",
+    "pinterest.com",
+    "www.pinterest.com",
+)
+
+EXTENSOES_IGNORADAS = (
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".webp",
+    ".svg",
+    ".mp4",
+    ".mp3",
+    ".zip",
+    ".rar",
+    ".7z",
+    ".exe",
+    ".msi",
+)
+
 
 MARCADORES_BLOQUEIO = (
     "attention required",
@@ -304,23 +370,30 @@ def _criar_pedido(url, accept=None):
 
 
 def _obter_json(url, parametros, timeout=HTTP_TIMEOUT_CURTO):
-    endereco = f"{url}?{urlencode(parametros)}"
-
-    with urlopen(_criar_pedido(endereco), timeout=timeout) as resposta:
-        return json.loads(resposta.read().decode("utf-8"))
+    resposta = HTTP_SESSION.get(
+        url,
+        params=parametros,
+        timeout=timeout,
+    )
+    resposta.raise_for_status()
+    return resposta.json()
 
 
 def _obter_html(url, timeout=HTTP_TIMEOUT_CURTO):
-    with urlopen(_criar_pedido(url), timeout=timeout) as resposta:
-        conteudo = resposta.read()
-        charset = resposta.headers.get_content_charset() or "utf-8"
+    resposta = HTTP_SESSION.get(
+        url,
+        timeout=timeout,
+        allow_redirects=True,
+    )
+    resposta.raise_for_status()
 
-        try:
-            html = conteudo.decode(charset, errors="replace")
-        except LookupError:
-            html = conteudo.decode("utf-8", errors="replace")
+    if not resposta.encoding:
+        resposta.encoding = (
+            resposta.apparent_encoding
+            or "utf-8"
+        )
 
-        return html, resposta.geturl()
+    return resposta.text, resposta.url
 
 
 def _obter_texto_reader(url, timeout=HTTP_TIMEOUT_READER):
@@ -396,32 +469,58 @@ def _titulo_invalido(titulo):
 
 
 def _dominio_confiavel(url):
-    dominio = urlparse(str(url or "")).netloc.lower()
-    return any(
-        dominio == permitido or dominio.endswith("." + permitido)
-        for permitido in DOMINIOS_CONFIAVEIS
-    )
+    """
+    O nome da função foi mantido para não quebrar o restante código,
+    mas ela já não funciona como whitelist.
+
+    Aceita qualquer página Web pública que pareça utilizável e rejeita
+    apenas motores de pesquisa, redes sociais e ficheiros que não fazem
+    sentido como ficha bibliográfica.
+    """
+    valor = str(url or "").strip()
+
+    if not valor:
+        return False
+
+    parsed = urlparse(valor)
+
+    if parsed.scheme not in ("http", "https"):
+        return False
+
+    dominio = parsed.netloc.lower().split(":")[0]
+
+    if not dominio:
+        return False
+
+    if dominio in {
+        "127.0.0.1",
+        "localhost",
+        "0.0.0.0",
+    }:
+        return False
+
+    for bloqueado in DOMINIOS_BLOQUEADOS_PESQUISA:
+        if (
+            dominio == bloqueado
+            or dominio.endswith("." + bloqueado)
+        ):
+            return False
+
+    caminho = parsed.path.lower()
+
+    if any(
+        caminho.endswith(extensao)
+        for extensao in EXTENSOES_IGNORADAS
+    ):
+        return False
+
+    return True
 
 
 def _prioridade_dominio(url):
-    dominio = urlparse(str(url or "")).netloc.lower()
-
-    ordem = {
-        "wook.pt": 0,
-        "www.wook.pt": 0,
-        "bertrand.pt": 1,
-        "www.bertrand.pt": 1,
-        "bertrandeditora.pt": 2,
-        "www.bertrandeditora.pt": 2,
-        "fnac.pt": 3,
-        "www.fnac.pt": 3,
-        "continente.pt": 4,
-        "www.continente.pt": 4,
-        "arquivolivraria.pt": 5,
-        "www.arquivolivraria.pt": 5,
-    }
-
-    return ordem.get(dominio, 99)
+    # Não há sites preferidos. Todas as fontes Web são avaliadas
+    # pelos metadados encontrados e pela presença do ISBN exato.
+    return 0
 
 
 # Open Library
@@ -1032,7 +1131,18 @@ def _generos_da_classificacao(valor):
         ("Terror", ("terror", "horror")),
         ("Suspense", ("suspense", "thriller")),
         ("Biografia", ("biografia", "biography", "autobiography", "memoir")),
-        ("Infantil", ("infantil", "juvenile fiction", "children fiction", "children s fiction")),
+        ("Infantil", (
+            "infantil",
+            "juvenile fiction",
+            "juvenile nonfiction",
+            "children fiction",
+            "children nonfiction",
+            "children s fiction",
+            "children s nonfiction",
+            "kids",
+            "children",
+            "juvenil",
+        )),
         ("Aventura", ("aventura", "adventure")),
         ("Romance", ("romance", "romantic fiction", "love stories")),
         ("Ficção", ("ficcao", "fiction", "novel")),
@@ -1277,7 +1387,12 @@ def _extrair_dados_texto(texto, url, isbn, origem="Pesquisa Web"):
 
     autor_campo = _linha_valor(
         texto,
-        [r"Autor(?:\(es\))?", "Author"],
+        [
+            r"Autor(?:\(es\))?",
+            "Author",
+            "Por",
+            "By",
+        ],
     )
 
     if autor_campo:
@@ -1297,7 +1412,13 @@ def _extrair_dados_texto(texto, url, isbn, origem="Pesquisa Web"):
 
     editora = _linha_valor(
         texto,
-        ["Editor", "Editora", "Publisher"],
+        [
+            r"Editor/Editora",
+            "Editorial",
+            "Editor",
+            "Editora",
+            "Publisher",
+        ],
     )
 
     data_publicacao = _linha_valor(
@@ -1307,9 +1428,27 @@ def _extrair_dados_texto(texto, url, isbn, origem="Pesquisa Web"):
             r"Data de Lan[cç]amento",
             r"Edi[cç][aã]o/reimpress[aã]o",
             r"Ano de edi[cç][aã]o",
+            r"Ano de publica[cç][aã]o",
+            r"Fecha de lanzamiento",
             r"Release Date",
+            r"Published",
+            r"Publication Date",
         ],
     )
+
+    if not data_publicacao and editora:
+        ano_editora = re.search(
+            r"\b(19\d{2}|20\d{2})\b",
+            str(editora),
+        )
+        if ano_editora:
+            data_publicacao = ano_editora.group(1)
+            editora = re.sub(
+                r"\s*,?\s*\b(19\d{2}|20\d{2})\b\s*$",
+                "",
+                str(editora),
+            ).strip(" ,-")
+
     data_publicacao = _normalizar_data_catalogo(data_publicacao)
 
     classificacao = _extrair_classificacao_tematica(texto)
@@ -1322,7 +1461,11 @@ def _extrair_dados_texto(texto, url, isbn, origem="Pesquisa Web"):
                 "Temática",
                 "Tematica",
                 "Categoria",
+                r"Categor[ií]a",
                 "Categories",
+                "Subject",
+                "Subjects",
+                "Tags",
             ],
         )
 
@@ -1520,250 +1663,138 @@ def _extrair_links_markdown(texto):
     return links
 
 
-def _links_google(html):
-    links = []
+def _resultado_ddgs_valido(resultado):
+    if not isinstance(resultado, dict):
+        return False
 
-    for bruto in re.findall(
-        r'href=["\']/url\?q=(https?://[^&"\']+)',
-        str(html or ""),
-        flags=re.I,
-    ):
-        links.append(unquote(bruto))
+    href = str(
+        resultado.get("href")
+        or resultado.get("url")
+        or ""
+    ).strip()
 
-    # Algumas versões do Google expõem diretamente o href.
-    links.extend(_extrair_links_html(html, "https://www.google.com/"))
+    if not href:
+        return False
 
-    return links
-
-
-def _links_bing(html):
-    links = []
-
-    for padrao in (
-        r'<li[^>]*class=["\'][^"\']*\bb_algo\b[^"\']*["\'][^>]*>.*?<a[^>]+href=["\'](https?://[^"\']+)["\']',
-        r'<h2[^>]*>\s*<a[^>]+href=["\'](https?://[^"\']+)["\']',
-    ):
-        links.extend(
-            re.findall(
-                padrao,
-                str(html or ""),
-                flags=re.I | re.S,
-            )
-        )
-
-    return links
-
-
-def _links_duckduckgo(html):
-    return _extrair_links_html(
-        html,
-        "https://html.duckduckgo.com/",
+    return _dominio_confiavel(
+        href
     )
 
 
-def _recolher_links_url(url):
+def _pesquisar_web_ddgs(isbn):
+    isbn_limpo = normalizar_isbn(
+        isbn
+    )
+
+    consultas = [
+        f'"{isbn_limpo}"',
+        f'"{isbn_limpo}" livro',
+        f'"{isbn_limpo}" ISBN',
+        f'"{isbn_limpo}" book',
+    ]
+
     links = []
     vistos = set()
-    marcadores_produto = (
-        "/livro/",
-        "/produtos/ficha/",
-        "/product/",
-        "/produto/",
-        "/livros/",
-    )
-
-    def adicionar(link):
-        if not link or link in vistos:
-            return
-        if not _dominio_confiavel(link):
-            return
-        caminho = urlparse(link).path.lower()
-        if not any(marcador in caminho for marcador in marcadores_produto):
-            return
-        vistos.add(link)
-        links.append(link)
 
     try:
-        html, url_final = _obter_html(url)
+        pesquisador = DDGS(
+            timeout=12
+        )
+    except Exception as erro:
+        print(
+            "[BookCatalog] Não foi possível iniciar DDGS:",
+            erro,
+        )
+        return []
 
-        if not _conteudo_bloqueado(html):
-            for link in _extrair_links_html(html, url_final):
-                adicionar(link)
-                if len(links) >= 40:
-                    break
-    except Exception:
-        pass
-
-    # Para páginas de pesquisa bloqueadas, tenta o Reader.
-    if not links:
+    for consulta in consultas:
         try:
-            markdown = _obter_texto_reader(url)
+            resultados = pesquisador.text(
+                consulta,
+                region="pt-pt",
+                safesearch="moderate",
+                max_results=20,
+                backend="auto",
+            ) or []
+        except Exception as erro:
+            print(
+                f"[BookCatalog] DDGS falhou para {consulta!r}:",
+                erro,
+            )
+            resultados = []
 
-            if not _conteudo_bloqueado(markdown):
-                for link in _extrair_links_markdown(markdown):
-                    adicionar(link)
-                    if len(links) >= 40:
-                        break
-        except Exception:
-            pass
+        print(
+            f"[BookCatalog] DDGS {consulta!r}: "
+            f"{len(resultados)} resultado(s)."
+        )
 
-    return links
+        for resultado in resultados:
+            if not _resultado_ddgs_valido(
+                resultado
+            ):
+                continue
 
+            href = str(
+                resultado.get("href")
+                or resultado.get("url")
+                or ""
+            ).strip()
 
-def _pesquisar_google(isbn):
-    consulta = (
-        f'"{isbn}" '
-        "(site:wook.pt OR site:bertrand.pt OR site:bertrandeditora.pt "
-        "OR site:fnac.pt OR site:continente.pt OR site:arquivolivraria.pt)"
-    )
+            if href in vistos:
+                continue
 
-    url = "https://www.google.com/search?" + urlencode(
-        {
-            "q": consulta,
-            "hl": "pt-PT",
-            "num": 10,
-        }
-    )
+            vistos.add(
+                href
+            )
+            links.append(
+                href
+            )
 
-    try:
-        html, _ = _obter_html(url)
-        if _conteudo_bloqueado(html):
-            return []
-        return _links_google(html)
-    except Exception:
-        return []
+        if len(links) >= 25:
+            break
 
-
-def _pesquisar_bing(isbn):
-    consulta = (
-        f'"{isbn}" '
-        "(site:wook.pt OR site:bertrand.pt OR site:bertrandeditora.pt "
-        "OR site:fnac.pt OR site:continente.pt OR site:arquivolivraria.pt)"
-    )
-
-    url = "https://www.bing.com/search?" + urlencode(
-        {
-            "q": consulta,
-            "count": 10,
-            "setlang": "pt-PT",
-        }
-    )
-
-    try:
-        html, _ = _obter_html(url)
-        if _conteudo_bloqueado(html):
-            return []
-        return _links_bing(html)
-    except Exception:
-        return []
-
-
-def _pesquisar_duckduckgo(isbn):
-    consulta = f'"{isbn}" livro'
-    url = "https://html.duckduckgo.com/html/?" + urlencode({"q": consulta})
-
-    try:
-        html, _ = _obter_html(url)
-        if _conteudo_bloqueado(html):
-            return []
-        return _links_duckduckgo(html)
-    except Exception:
-        return []
+    return links[:30]
 
 
 def _descobrir_links_produto(isbn):
-    isbn_limpo = normalizar_isbn(isbn)
-    encontrados = []
-    vistos = set()
-
-    # Primeiro pesquisa diretamente nas lojas; normalmente isto é mais rápido
-    # e reduz dependência de motores de pesquisa.
-    pesquisas_lojas = [
-        "https://www.wook.pt/pesquisa?" + urlencode({"keyword": isbn_limpo}),
-        "https://www.bertrand.pt/pesquisa/" + quote(isbn_limpo, safe=""),
-    ]
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        futuros = [
-            executor.submit(_recolher_links_url, url)
-            for url in pesquisas_lojas
-        ]
-
-        for futuro in as_completed(futuros):
-            try:
-                links = futuro.result()
-            except Exception:
-                links = []
-
-            for link in links:
-                if _dominio_confiavel(link) and link not in vistos:
-                    vistos.add(link)
-                    encontrados.append(link)
-
-    # Motores em paralelo. Mesmo que a loja tenha encontrado algo, juntamos
-    # alternativas para podermos ignorar uma página Cloudflare e usar outra.
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futuros = [
-            executor.submit(_pesquisar_google, isbn_limpo),
-            executor.submit(_pesquisar_bing, isbn_limpo),
-            executor.submit(_pesquisar_duckduckgo, isbn_limpo),
-        ]
-
-        for futuro in as_completed(futuros):
-            try:
-                links = futuro.result()
-            except Exception:
-                links = []
-
-            for link in links:
-                if _dominio_confiavel(link) and link not in vistos:
-                    vistos.add(link)
-                    encontrados.append(link)
-
-    # Prioriza URLs que parecem fichas de produto.
-    marcadores_produto = (
-        "/livro/",
-        "/produtos/ficha/",
-        "/product/",
-        "/produto/",
-        "/livros/",
+    isbn_limpo = normalizar_isbn(
+        isbn
     )
 
-    produtos = [
-        link
-        for link in encontrados
-        if any(
-            marcador in urlparse(link).path.lower()
-            for marcador in marcadores_produto
-        )
-    ]
+    links = _pesquisar_web_ddgs(
+        isbn_limpo
+    )
 
-    outros = [
-        link
-        for link in encontrados
-        if link not in produtos
-    ]
+    print(
+        f"[BookCatalog] Pesquisa Web geral encontrou "
+        f"{len(links)} link(s) candidato(s)."
+    )
 
-    produtos.sort(key=_prioridade_dominio)
-    outros.sort(key=_prioridade_dominio)
-
-    return produtos + outros
+    return links
 
 
 # Leitura e pesquisa web
 
 
 def _ler_candidato_web(url, isbn):
-    isbn_limpo = normalizar_isbn(isbn)
-    print(f"[BookCatalog] A testar página: {url}")
+    isbn_limpo = normalizar_isbn(
+        isbn
+    )
 
-    # 1) HTML normal.
+    print(
+        f"[BookCatalog] A testar página: {url}"
+    )
+
+    # 1) Tenta ler o HTML diretamente.
     try:
-        html, url_final = _obter_html(url)
+        html, url_final = _obter_html(
+            url,
+            timeout=12,
+        )
 
-        if _conteudo_bloqueado(html):
-            print("[BookCatalog] Página HTML bloqueada/Cloudflare. A tentar Reader...")
-        else:
+        if not _conteudo_bloqueado(
+            html
+        ):
             dados = _extrair_dados_html(
                 html,
                 url_final,
@@ -1772,96 +1803,308 @@ def _ler_candidato_web(url, isbn):
             )
 
             if dados:
-                print(f"[BookCatalog] Ficha válida encontrada por HTML: {url_final}")
+                print(
+                    "[BookCatalog] Ficha válida encontrada "
+                    f"por HTML: {url_final}"
+                )
                 return dados
+
     except Exception as erro:
-        print(f"[BookCatalog] HTML direto falhou: {erro}")
-
-    # 2) Jina Reader. Este caminho só é aceite se devolver uma ficha real;
-    # páginas 'Attention Required | Cloudflare' são rejeitadas acima.
-    try:
-        markdown = _obter_texto_reader(url)
-
-        if _conteudo_bloqueado(markdown):
-            print("[BookCatalog] Reader também recebeu página bloqueada. Ignorada.")
-            return None
-
-        dados = _extrair_dados_texto(
-            markdown,
-            url,
-            isbn_limpo,
-            "Pesquisa Web",
+        print(
+            "[BookCatalog] HTML direto falhou:",
+            erro,
         )
 
-        if dados:
-            print(f"[BookCatalog] Ficha válida encontrada pelo Reader: {url}")
-            return dados
+    # 2) Usa o extrator do DDGS. Isto costuma funcionar em páginas
+    # onde a leitura HTTP direta é bloqueada ou demasiado dinâmica.
+    try:
+        extraido = DDGS(
+            timeout=12
+        ).extract(
+            url,
+            fmt="text_markdown",
+        )
+
+        markdown = ""
+
+        if isinstance(
+            extraido,
+            dict,
+        ):
+            markdown = str(
+                extraido.get(
+                    "content"
+                )
+                or ""
+            )
+
+        if (
+            markdown
+            and not _conteudo_bloqueado(
+                markdown
+            )
+        ):
+            dados = _extrair_dados_texto(
+                markdown,
+                url,
+                isbn_limpo,
+                "Pesquisa Web",
+            )
+
+            if dados:
+                print(
+                    "[BookCatalog] Ficha válida encontrada "
+                    f"pelo DDGS Extract: {url}"
+                )
+                return dados
+
     except Exception as erro:
-        print(f"[BookCatalog] Reader falhou: {erro}")
+        print(
+            "[BookCatalog] DDGS Extract falhou:",
+            erro,
+        )
+
+    # 3) Último fallback: Jina Reader.
+    try:
+        markdown = _obter_texto_reader(
+            url
+        )
+
+        if (
+            markdown
+            and not _conteudo_bloqueado(
+                markdown
+            )
+        ):
+            dados = _extrair_dados_texto(
+                markdown,
+                url,
+                isbn_limpo,
+                "Pesquisa Web",
+            )
+
+            if dados:
+                print(
+                    "[BookCatalog] Ficha válida encontrada "
+                    f"pelo Reader: {url}"
+                )
+                return dados
+
+    except Exception as erro:
+        print(
+            "[BookCatalog] Reader falhou:",
+            erro,
+        )
 
     return None
 
 
+def procurar_livro_google_books_web(isbn):
+    """
+    Mantido por compatibilidade com o restante fluxo.
+    Não faz scraping direto do Google Books, que costuma responder 403.
+    A pesquisa Web geral é tratada pelo DDGS.
+    """
+    return {
+        "sucesso": False,
+        "erro": (
+            "Pesquisa direta no Google Books Web desativada. "
+            "A pesquisa Web geral será usada."
+        ),
+    }
+
+
 def procurar_livro_pesquisa_web(isbn):
-    isbn_limpo = normalizar_isbn(isbn)
-    links = _descobrir_links_produto(isbn_limpo)
+    isbn_limpo = normalizar_isbn(
+        isbn
+    )
+
+    links = _descobrir_links_produto(
+        isbn_limpo
+    )
 
     print(
-        f"[BookCatalog] Pesquisa web encontrou "
+        f"[BookCatalog] Pesquisa Web geral encontrou "
         f"{len(links)} link(s) candidato(s)."
     )
 
     if not links:
         return {
             "sucesso": False,
-            "erro": "Nenhuma página de produto foi encontrada na pesquisa web.",
+            "erro": (
+                "Nenhuma página candidata foi encontrada "
+                "na pesquisa Web geral."
+            ),
         }
 
-    # Evita abrir dezenas de páginas. Se uma fonte estiver bloqueada, ainda há
-    # alternativas suficientes para escolher uma ficha correta.
-    candidatos = links[:5]
+    # Lê vários resultados em paralelo. Uma página só é aceite
+    # se o conteúdo contiver exatamente o ISBN pesquisado.
+    candidatos = links[:12]
     resultados = []
 
-    with ThreadPoolExecutor(max_workers=min(4, len(candidatos))) as executor:
+    with ThreadPoolExecutor(
+        max_workers=min(
+            6,
+            len(candidatos),
+        )
+    ) as executor:
         futuros = {
-            executor.submit(_ler_candidato_web, link, isbn_limpo): link
+            executor.submit(
+                _ler_candidato_web,
+                link,
+                isbn_limpo,
+            ): link
             for link in candidatos
         }
 
-        for futuro in as_completed(futuros):
-            link = futuros[futuro]
+        for futuro in as_completed(
+            futuros
+        ):
+            link = futuros[
+                futuro
+            ]
 
             try:
                 dados = futuro.result()
             except Exception as erro:
-                print(f"[BookCatalog] Erro ao ler {link}: {erro}")
+                print(
+                    f"[BookCatalog] "
+                    f"Erro ao ler {link}: "
+                    f"{erro}"
+                )
                 dados = None
 
             if dados:
-                resultados.append(dados)
+                resultados.append(
+                    dados
+                )
 
     if not resultados:
         return {
             "sucesso": False,
-            "erro": "As páginas encontradas não continham uma ficha bibliográfica válida.",
+            "erro": (
+                "As páginas encontradas não continham "
+                "uma ficha bibliográfica válida com o ISBN exato."
+            ),
         }
 
-    # Escolhe a ficha com mais metadados. Em empate, prefere WOOK/Bertrand.
     resultados.sort(
-        key=lambda item: (
-            _pontuar_metadados(item),
-            -_prioridade_dominio(item.get("url_origem") or ""),
-        ),
+        key=_pontuar_metadados,
         reverse=True,
     )
 
     melhor = resultados[0]
 
+    # Se houver várias páginas válidas, completa campos em falta
+    # usando as restantes, sem misturar dados quando já existem.
+    autores = list(
+        melhor.get(
+            "autores"
+        )
+        or []
+    )
+    generos = list(
+        melhor.get(
+            "generos"
+        )
+        or []
+    )
+
+    autores_normalizados = {
+        _normalizar_texto(
+            autor
+        )
+        for autor in autores
+    }
+
+    generos_normalizados = {
+        _normalizar_texto(
+            genero
+        )
+        for genero in generos
+    }
+
+    for resultado in resultados[1:]:
+        if not melhor.get(
+            "editora"
+        ):
+            melhor[
+                "editora"
+            ] = resultado.get(
+                "editora"
+            )
+
+        if not melhor.get(
+            "data_publicacao"
+        ):
+            melhor[
+                "data_publicacao"
+            ] = resultado.get(
+                "data_publicacao"
+            )
+
+        for autor in (
+            resultado.get(
+                "autores"
+            )
+            or []
+        ):
+            chave = (
+                _normalizar_texto(
+                    autor
+                )
+            )
+
+            if (
+                chave
+                and chave
+                not in autores_normalizados
+            ):
+                autores.append(
+                    autor
+                )
+                autores_normalizados.add(
+                    chave
+                )
+
+        for genero in (
+            resultado.get(
+                "generos"
+            )
+            or []
+        ):
+            chave = (
+                _normalizar_texto(
+                    genero
+                )
+            )
+
+            if (
+                chave
+                and chave
+                not in generos_normalizados
+            ):
+                generos.append(
+                    genero
+                )
+                generos_normalizados.add(
+                    chave
+                )
+
+    melhor[
+        "autores"
+    ] = autores
+
+    melhor[
+        "generos"
+    ] = generos
+
     print(
-        "[BookCatalog] Melhor ficha web: "
+        "[BookCatalog] Melhor ficha Web geral: "
         f"{melhor.get('url_origem')} | "
         f"título={melhor.get('titulo')!r} | "
-        f"autor={melhor.get('autores')!r}"
+        f"autor={melhor.get('autores')!r} | "
+        f"pontuação={_pontuar_metadados(melhor)}"
     )
 
     return melhor
@@ -1870,69 +2113,353 @@ def procurar_livro_pesquisa_web(isbn):
 # Fluxo final usado pelo SABIN
 
 
-def _consultar_apis_em_paralelo(isbn_limpo):
+def _normalizar_lista_metadados(valor):
+    if not valor:
+        return []
+
+    if isinstance(valor, str):
+        valores = [valor]
+    else:
+        valores = list(valor)
+
+    resultado = []
+    vistos = set()
+
+    for item in valores:
+        texto_item = str(
+            item or ""
+        ).strip()
+
+        if not texto_item:
+            continue
+
+        chave = _normalizar_texto(
+            texto_item
+        )
+
+        if chave in vistos:
+            continue
+
+        vistos.add(chave)
+        resultado.append(
+            texto_item
+        )
+
+    return resultado
+
+
+def _mesclar_resultados_livro(
+    resultados,
+    isbn_limpo,
+):
+    validos = [
+        resultado
+        for resultado in resultados
+        if (
+            resultado
+            and resultado.get(
+                "sucesso"
+            )
+        )
+    ]
+
+    if not validos:
+        return None
+
+    titulo = None
+    editora = None
+    data_publicacao = None
+    autores = []
+    generos = []
+    origens = []
+
+    for resultado in validos:
+        origem = resultado.get(
+            "origem"
+        )
+
+        if (
+            origem
+            and origem not in origens
+        ):
+            origens.append(
+                origem
+            )
+
+        titulo_resultado = (
+            resultado.get(
+                "titulo"
+            )
+        )
+
+        if (
+            not titulo
+            and not _titulo_invalido(
+                titulo_resultado
+            )
+        ):
+            titulo = str(
+                titulo_resultado
+            ).strip()
+
+        if not editora:
+            valor_editora = (
+                resultado.get(
+                    "editora"
+                )
+            )
+
+            if valor_editora:
+                editora = str(
+                    valor_editora
+                ).strip()
+
+        if not data_publicacao:
+            valor_data = (
+                resultado.get(
+                    "data_publicacao"
+                )
+            )
+
+            if valor_data:
+                data_publicacao = str(
+                    valor_data
+                ).strip()
+
+        autores_existentes = {
+            _normalizar_texto(
+                autor
+            )
+            for autor in autores
+        }
+
+        for autor in (
+            _normalizar_lista_metadados(
+                resultado.get(
+                    "autores"
+                )
+            )
+        ):
+            chave = _normalizar_texto(
+                autor
+            )
+
+            if chave not in autores_existentes:
+                autores.append(
+                    autor
+                )
+                autores_existentes.add(
+                    chave
+                )
+
+        generos_existentes = {
+            _normalizar_texto(
+                genero
+            )
+            for genero in generos
+        }
+
+        for genero in (
+            _normalizar_lista_metadados(
+                resultado.get(
+                    "generos"
+                )
+            )
+        ):
+            chave = _normalizar_texto(
+                genero
+            )
+
+            if chave not in generos_existentes:
+                generos.append(
+                    genero
+                )
+                generos_existentes.add(
+                    chave
+                )
+
+    if _titulo_invalido(titulo):
+        return None
+
+    return {
+        "sucesso": True,
+        "origem": (
+            " + ".join(origens)
+            if origens
+            else "Fonte externa"
+        ),
+        "titulo": titulo,
+        "isbn": isbn_limpo,
+        "autores": autores,
+        "editora": editora,
+        "data_publicacao": (
+            data_publicacao
+        ),
+        "generos": generos,
+    }
+
+
+def _resultado_precisa_enriquecimento(
+    resultado,
+):
+    if not resultado:
+        return True
+
+    return any(
+        [
+            not resultado.get(
+                "autores"
+            ),
+            not resultado.get(
+                "editora"
+            ),
+            not resultado.get(
+                "data_publicacao"
+            ),
+            not resultado.get(
+                "generos"
+            ),
+        ]
+    )
+
+
+def _consultar_apis_em_paralelo(
+    isbn_limpo,
+):
     tarefas = {
-        "Google Books": procurar_livro_google_books,
-        "Open Library": procurar_livro_open_library,
+        "Google Books": (
+            procurar_livro_google_books
+        ),
+        "Open Library": (
+            procurar_livro_open_library
+        ),
     }
 
     resultados = {}
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
+    with ThreadPoolExecutor(
+        max_workers=2
+    ) as executor:
         futuros = {
-            executor.submit(funcao, isbn_limpo): nome
-            for nome, funcao in tarefas.items()
+            executor.submit(
+                funcao,
+                isbn_limpo,
+            ): nome
+            for nome, funcao
+            in tarefas.items()
         }
 
-        for futuro in as_completed(futuros):
-            nome = futuros[futuro]
+        for futuro in as_completed(
+            futuros
+        ):
+            nome = futuros[
+                futuro
+            ]
 
             try:
-                resultado = futuro.result()
+                resultado = (
+                    futuro.result()
+                )
             except Exception as erro:
-                print(f"[BookCatalog] {nome}: erro: {erro}")
-                resultado = {"sucesso": False}
+                print(
+                    f"[BookCatalog] "
+                    f"{nome}: erro: "
+                    f"{erro}"
+                )
+                resultado = {
+                    "sucesso": False
+                }
 
-            resultados[nome] = resultado
+            resultados[
+                nome
+            ] = resultado
 
             print(
                 f"[BookCatalog] {nome}: "
                 f"{'encontrado' if resultado.get('sucesso') else 'não encontrado'}."
             )
 
-    # Google Books primeiro porque normalmente contém metadados da edição.
-    for nome in ("Google Books", "Open Library"):
-        resultado = resultados.get(nome) or {}
-        if resultado.get("sucesso"):
-            return resultado
+    # Dá prioridade aos dados da Google Books,
+    # mas aproveita campos em falta da Open Library.
+    ordem = [
+        resultados.get(
+            "Google Books"
+        ),
+        resultados.get(
+            "Open Library"
+        ),
+    ]
 
-    return None
+    return _mesclar_resultados_livro(
+        ordem,
+        isbn_limpo,
+    )
 
 
-@lru_cache(maxsize=256)
-def _procurar_externo_cacheado(isbn_limpo):
-    resultado_api = _consultar_apis_em_paralelo(isbn_limpo)
+def _procurar_externo_cacheado(
+    isbn_limpo,
+):
+    resultado_api = (
+        _consultar_apis_em_paralelo(
+            isbn_limpo
+        )
+    )
 
-    if resultado_api:
+    if (
+        resultado_api
+        and not _resultado_precisa_enriquecimento(
+            resultado_api
+        )
+    ):
         return resultado_api
 
-    print("[BookCatalog] APIs sem resultado. A iniciar pesquisa web...")
+    if resultado_api:
+        print(
+            "[BookCatalog] APIs encontraram o livro, "
+            "mas faltam metadados. "
+            "A iniciar pesquisa Web geral..."
+        )
+    else:
+        print(
+            "[BookCatalog] APIs sem resultado. "
+            "A iniciar pesquisa Web geral..."
+        )
 
-    resultado_web = procurar_livro_pesquisa_web(isbn_limpo)
+    resultado_web = (
+        procurar_livro_pesquisa_web(
+            isbn_limpo
+        )
+    )
 
     print(
         "[BookCatalog] Pesquisa Web: "
         f"{'encontrado' if resultado_web.get('sucesso') else 'não encontrado'}."
     )
 
-    if resultado_web.get("sucesso"):
-        return resultado_web
+    if resultado_web.get(
+        "sucesso"
+    ):
+        resultado_completo = (
+            _mesclar_resultados_livro(
+                [
+                    resultado_api,
+                    resultado_web,
+                ],
+                isbn_limpo,
+            )
+        )
+
+        if resultado_completo:
+            return resultado_completo
+
+    if resultado_api:
+        return resultado_api
 
     return {
         "sucesso": False,
         "erro": (
-            "ISBN não encontrado na Google Books, Open Library "
-            "nem numa ficha bibliográfica web válida."
+            "ISBN não encontrado na Google Books, "
+            "Open Library nem na pesquisa Web geral."
         ),
     }
 
@@ -1944,8 +2471,9 @@ def procurar_livro(isbn):
     Ordem:
       1. Base de dados local da Bookmarked;
       2. Google Books + Open Library em paralelo;
-      3. Pesquisa web em lojas/livrarias conhecidas;
-      4. Páginas bloqueadas por Cloudflare são ignoradas, nunca usadas como livro.
+      3. Pesquisa Web geral por metapesquisa DDGS, sem lista fixa de sites;
+      4. Só são aceites páginas que contenham o ISBN exato e metadados bibliográficos;
+      5. Páginas bloqueadas ou resultados inválidos são ignorados.
     """
     isbn_limpo = normalizar_isbn(isbn)
 

@@ -1,4 +1,3 @@
--- SABIN - Gestão de Catálogo
 -- Adiciona histórico de stock e de preços à base operacional.
 
 CREATE TABLE IF NOT EXISTS movimentos_stock (

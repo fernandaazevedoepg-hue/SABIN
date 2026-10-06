@@ -120,14 +120,81 @@ def formatar_mes(valor):
 
 # Visão Geral
 
-def carregar_kpis():
+def _contar_vendas_operacionais():
     query = text("""
-        SELECT
-            COALESCE(SUM(subtotal), 0) AS receita_total,
-            COUNT(DISTINCT venda_id_origem) AS numero_vendas,
-            COALESCE(SUM(quantidade), 0) AS unidades_vendidas
+        SELECT COUNT(*) AS total
+        FROM public.vendas
+        WHERE LOWER(TRIM(COALESCE(status, ''))) LIKE 'conclu%';
+    """)
+
+    try:
+        with engine.connect() as connection:
+            resultado = connection.execute(
+                query
+            ).scalar_one()
+
+        return int(resultado or 0)
+    except Exception as erro:
+        print(
+            "Erro ao contar vendas operacionais:",
+            erro,
+        )
+        return 0
+
+
+def _contar_vendas_dw():
+    query = text("""
+        SELECT COUNT(DISTINCT venda_id_origem) AS total
         FROM dw.fact_vendas;
     """)
+
+    try:
+        with engine.connect() as connection:
+            resultado = connection.execute(
+                query
+            ).scalar_one()
+
+        return int(resultado or 0)
+    except Exception as erro:
+        print(
+            "Erro ao contar vendas do Data Warehouse:",
+            erro,
+        )
+        return 0
+
+
+def _usar_dados_operacionais_visao_geral():
+    vendas_operacionais = (
+        _contar_vendas_operacionais()
+    )
+    vendas_dw = _contar_vendas_dw()
+
+    return (
+        vendas_operacionais > 0
+        and vendas_operacionais >= vendas_dw
+    )
+
+
+def carregar_kpis():
+    if _usar_dados_operacionais_visao_geral():
+        query = text("""
+            SELECT
+                COALESCE(SUM(iv.subtotal), 0) AS receita_total,
+                COUNT(DISTINCT v.id) AS numero_vendas,
+                COALESCE(SUM(iv.quantidade), 0) AS unidades_vendidas
+            FROM public.vendas v
+            JOIN public.itens_venda iv
+                ON iv.venda_id = v.id
+            WHERE LOWER(TRIM(COALESCE(v.status, ''))) LIKE 'conclu%';
+        """)
+    else:
+        query = text("""
+            SELECT
+                COALESCE(SUM(subtotal), 0) AS receita_total,
+                COUNT(DISTINCT venda_id_origem) AS numero_vendas,
+                COALESCE(SUM(quantidade), 0) AS unidades_vendidas
+            FROM dw.fact_vendas;
+        """)
 
     with engine.connect() as connection:
         resultado = connection.execute(
@@ -147,7 +214,10 @@ def carregar_kpis():
     )
 
     if numero_vendas > 0:
-        ticket_medio = receita_total / numero_vendas
+        ticket_medio = (
+            receita_total
+            / numero_vendas
+        )
     else:
         ticket_medio = 0
 
@@ -160,16 +230,35 @@ def carregar_kpis():
 
 
 def carregar_receita_mensal():
-    query = text("""
-        SELECT
-            DATE_TRUNC('month', d.data)::date AS mes,
-            SUM(f.subtotal) AS receita
-        FROM dw.fact_vendas f
-        JOIN dw.dim_data d
-            ON d.data_key = f.data_key
-        GROUP BY 1
-        ORDER BY 1;
-    """)
+    if _usar_dados_operacionais_visao_geral():
+        query = text("""
+            SELECT
+                DATE_TRUNC(
+                    'month',
+                    v.data_venda
+                )::date AS mes,
+                SUM(iv.subtotal) AS receita
+            FROM public.vendas v
+            JOIN public.itens_venda iv
+                ON iv.venda_id = v.id
+            WHERE LOWER(TRIM(COALESCE(v.status, ''))) LIKE 'conclu%'
+            GROUP BY 1
+            ORDER BY 1;
+        """)
+    else:
+        query = text("""
+            SELECT
+                DATE_TRUNC(
+                    'month',
+                    d.data
+                )::date AS mes,
+                SUM(f.subtotal) AS receita
+            FROM dw.fact_vendas f
+            JOIN dw.dim_data d
+                ON d.data_key = f.data_key
+            GROUP BY 1
+            ORDER BY 1;
+        """)
 
     with engine.connect() as connection:
         dados = pd.read_sql(
@@ -177,25 +266,42 @@ def carregar_receita_mensal():
             connection,
         )
 
-    dados["mes"] = pd.to_datetime(
-        dados["mes"]
-    )
+    if not dados.empty:
+        dados["mes"] = pd.to_datetime(
+            dados["mes"]
+        )
 
     return dados
 
 
 def carregar_top_livros():
-    query = text("""
-        SELECT
-            l.titulo,
-            SUM(f.quantidade) AS unidades_vendidas
-        FROM dw.fact_vendas f
-        JOIN dw.dim_livro l
-            ON l.livro_key = f.livro_key
-        GROUP BY l.titulo
-        ORDER BY unidades_vendidas DESC
-        LIMIT 5;
-    """)
+    if _usar_dados_operacionais_visao_geral():
+        query = text("""
+            SELECT
+                l.titulo,
+                SUM(iv.quantidade) AS unidades_vendidas
+            FROM public.vendas v
+            JOIN public.itens_venda iv
+                ON iv.venda_id = v.id
+            JOIN public.livros l
+                ON l.id = iv.livro_id
+            WHERE LOWER(TRIM(COALESCE(v.status, ''))) LIKE 'conclu%'
+            GROUP BY l.titulo
+            ORDER BY unidades_vendidas DESC
+            LIMIT 5;
+        """)
+    else:
+        query = text("""
+            SELECT
+                l.titulo,
+                SUM(f.quantidade) AS unidades_vendidas
+            FROM dw.fact_vendas f
+            JOIN dw.dim_livro l
+                ON l.livro_key = f.livro_key
+            GROUP BY l.titulo
+            ORDER BY unidades_vendidas DESC
+            LIMIT 5;
+        """)
 
     with engine.connect() as connection:
         dados = pd.read_sql(
@@ -1190,16 +1296,27 @@ def pagina_visao_geral():
     kpis = carregar_kpis()
     receita_mensal = carregar_receita_mensal()
     top_livros = carregar_top_livros()
-    metricas = carregar_metricas_previsao()
-    stock = carregar_alertas_stock()
-    alertas_previsao = carregar_alertas_previsao()
 
-    grafico_receita = criar_grafico_receita_mensal(
-        receita_mensal
+    metricas = (
+        carregar_metricas_previsao()
+        or {}
     )
 
-    grafico_top = criar_grafico_top_livros(
-        top_livros
+    stock = carregar_alertas_stock()
+    alertas_previsao = (
+        carregar_alertas_previsao()
+    )
+
+    grafico_receita = (
+        criar_grafico_receita_mensal(
+            receita_mensal
+        )
+    )
+
+    grafico_top = (
+        criar_grafico_top_livros(
+            top_livros
+        )
     )
 
     criticos_stock = len(
@@ -1215,22 +1332,47 @@ def pagina_visao_geral():
     )
 
     alerta_critico = alertas_previsao[
-        alertas_previsao["nivel"] == "Crítico"
+        alertas_previsao["nivel"]
+        == "Crítico"
     ]
 
-    mensagem_previsao = "Sem alertas críticos."
+    mensagem_previsao = (
+        "Sem alertas críticos."
+    )
 
     if not alerta_critico.empty:
         mensagem_previsao = (
-            alerta_critico.iloc[0]["mensagem"]
+            alerta_critico
+            .iloc[0]["mensagem"]
         )
+
+    variacao = metricas.get(
+        "variacao_prevista_percent"
+    )
+
+    try:
+        variacao_numero = float(
+            variacao
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        variacao_numero = 0.0
 
     return html.Div(
         children=[
+            dcc.Interval(
+                id="overview-refresh-interval",
+                interval=5000,
+                n_intervals=0,
+            ),
             html.Div(
                 className="page-header",
                 children=[
-                    html.H2("Visão Geral"),
+                    html.H2(
+                        "Visão Geral"
+                    ),
                     html.P(
                         "Resumo do desempenho atual da livraria Bookmarked"
                     ),
@@ -1242,44 +1384,72 @@ def pagina_visao_geral():
                     html.Div(
                         className="card",
                         children=[
-                            html.P("Receita Total"),
+                            html.P(
+                                "Receita Total"
+                            ),
                             html.H3(
                                 formatar_euro(
-                                    kpis["receita_total"]
-                                )
+                                    kpis[
+                                        "receita_total"
+                                    ]
+                                ),
+                                id=(
+                                    "overview-revenue-total"
+                                ),
                             ),
                         ],
                     ),
                     html.Div(
                         className="card",
                         children=[
-                            html.P("Número de Vendas"),
+                            html.P(
+                                "Número de Vendas"
+                            ),
                             html.H3(
                                 formatar_inteiro(
-                                    kpis["numero_vendas"]
-                                )
+                                    kpis[
+                                        "numero_vendas"
+                                    ]
+                                ),
+                                id=(
+                                    "overview-sales-count"
+                                ),
                             ),
                         ],
                     ),
                     html.Div(
                         className="card",
                         children=[
-                            html.P("Unidades Vendidas"),
+                            html.P(
+                                "Unidades Vendidas"
+                            ),
                             html.H3(
                                 formatar_inteiro(
-                                    kpis["unidades_vendidas"]
-                                )
+                                    kpis[
+                                        "unidades_vendidas"
+                                    ]
+                                ),
+                                id=(
+                                    "overview-units-count"
+                                ),
                             ),
                         ],
                     ),
                     html.Div(
                         className="card",
                         children=[
-                            html.P("Ticket Médio"),
+                            html.P(
+                                "Ticket Médio"
+                            ),
                             html.H3(
                                 formatar_euro(
-                                    kpis["ticket_medio"]
-                                )
+                                    kpis[
+                                        "ticket_medio"
+                                    ]
+                                ),
+                                id=(
+                                    "overview-ticket-average"
+                                ),
                             ),
                         ],
                     ),
@@ -1295,7 +1465,12 @@ def pagina_visao_geral():
                                 "Evolução Mensal da Receita"
                             ),
                             dcc.Graph(
-                                figure=grafico_receita,
+                                id=(
+                                    "overview-revenue-chart"
+                                ),
+                                figure=(
+                                    grafico_receita
+                                ),
                                 config={
                                     "displayModeBar": False,
                                 },
@@ -1309,7 +1484,12 @@ def pagina_visao_geral():
                                 "Top 5 Livros Mais Vendidos"
                             ),
                             dcc.Graph(
-                                figure=grafico_top,
+                                id=(
+                                    "overview-top-chart"
+                                ),
+                                figure=(
+                                    grafico_top
+                                ),
                                 config={
                                     "displayModeBar": False,
                                 },
@@ -1324,79 +1504,117 @@ def pagina_visao_geral():
                     html.Div(
                         className="business-panel",
                         children=[
-                            html.H3("Situação Atual"),
+                            html.H3(
+                                "Situação Atual"
+                            ),
                             html.Div(
-                                className="business-grid",
+                                className=(
+                                    "business-grid"
+                                ),
                                 children=[
                                     html.Div(
-                                        className="business-item",
+                                        className=(
+                                            "business-item"
+                                        ),
                                         children=[
                                             html.Span(
                                                 "Último mês observado"
                                             ),
                                             html.Strong(
                                                 formatar_mes(
-                                                    metricas["ultimo_mes_real"]
-                                                )
+                                                    metricas.get(
+                                                        "ultimo_mes_real"
+                                                    )
+                                                ),
+                                                id=(
+                                                    "overview-last-month"
+                                                ),
                                             ),
                                         ],
                                     ),
                                     html.Div(
-                                        className="business-item",
+                                        className=(
+                                            "business-item"
+                                        ),
                                         children=[
                                             html.Span(
                                                 "Receita do último mês"
                                             ),
                                             html.Strong(
                                                 formatar_euro(
-                                                    metricas["ultima_receita_real"]
-                                                )
+                                                    metricas.get(
+                                                        "ultima_receita_real",
+                                                        0,
+                                                    )
+                                                ),
+                                                id=(
+                                                    "overview-last-revenue"
+                                                ),
                                             ),
                                         ],
                                     ),
                                     html.Div(
-                                        className="business-item",
+                                        className=(
+                                            "business-item"
+                                        ),
                                         children=[
                                             html.Span(
                                                 "Próximo período"
                                             ),
                                             html.Strong(
                                                 formatar_mes(
-                                                    metricas["proximo_mes"]
-                                                )
+                                                    metricas.get(
+                                                        "proximo_mes"
+                                                    )
+                                                ),
+                                                id=(
+                                                    "overview-next-period"
+                                                ),
                                             ),
                                         ],
                                     ),
                                     html.Div(
-                                        className="business-item",
+                                        className=(
+                                            "business-item"
+                                        ),
                                         children=[
                                             html.Span(
                                                 "Receita prevista"
                                             ),
                                             html.Strong(
                                                 formatar_euro(
-                                                    metricas["receita_prevista_proximo_mes"]
-                                                )
+                                                    metricas.get(
+                                                        "receita_prevista_proximo_mes",
+                                                        0,
+                                                    )
+                                                ),
+                                                id=(
+                                                    "overview-forecast-revenue"
+                                                ),
                                             ),
                                         ],
                                     ),
                                 ],
                             ),
                             html.Div(
-                                className="variation-box",
+                                className=(
+                                    "variation-box"
+                                ),
                                 children=[
                                     html.Span(
                                         "Variação prevista"
                                     ),
                                     html.Strong(
                                         formatar_percentagem(
-                                            metricas["variacao_prevista_percent"]
+                                            variacao_numero
+                                        ),
+                                        id=(
+                                            "overview-forecast-variation"
                                         ),
                                         className=(
                                             "value-negative"
-                                            if float(
-                                                metricas["variacao_prevista_percent"]
-                                            ) < 0
+                                            if variacao_numero
+                                            < 0
                                             else "value-positive"
                                         ),
                                     ),
@@ -1407,16 +1625,26 @@ def pagina_visao_geral():
                     html.Div(
                         className="business-panel",
                         children=[
-                            html.H3("Alertas Recentes"),
+                            html.H3(
+                                "Alertas Recentes"
+                            ),
                             html.Div(
                                 className=(
                                     "overview-alert "
                                     "critical-overview"
                                 ),
                                 children=[
-                                    html.Span("Stock crítico"),
+                                    html.Span(
+                                        "Stock crítico"
+                                    ),
                                     html.Strong(
-                                        f"{criticos_stock} livro(s)"
+                                        (
+                                            f"{criticos_stock} "
+                                            "livro(s)"
+                                        ),
+                                        id=(
+                                            "overview-stock-critical"
+                                        ),
                                     ),
                                 ],
                             ),
@@ -1426,9 +1654,17 @@ def pagina_visao_geral():
                                     "warning-overview"
                                 ),
                                 children=[
-                                    html.Span("Stock em atenção"),
+                                    html.Span(
+                                        "Stock em atenção"
+                                    ),
                                     html.Strong(
-                                        f"{atencao_stock} livro(s)"
+                                        (
+                                            f"{atencao_stock} "
+                                            "livro(s)"
+                                        ),
+                                        id=(
+                                            "overview-stock-warning"
+                                        ),
                                     ),
                                 ],
                             ),
@@ -1438,9 +1674,14 @@ def pagina_visao_geral():
                                     "info-overview"
                                 ),
                                 children=[
-                                    html.Span("Previsão"),
+                                    html.Span(
+                                        "Previsão"
+                                    ),
                                     html.Strong(
-                                        mensagem_previsao
+                                        mensagem_previsao,
+                                        id=(
+                                            "overview-forecast-alert"
+                                        ),
                                     ),
                                 ],
                             ),
@@ -3207,6 +3448,245 @@ app.layout = html.Div(
 )
 
 
+@app.callback(
+    Output(
+        "overview-revenue-total",
+        "children",
+    ),
+    Output(
+        "overview-sales-count",
+        "children",
+    ),
+    Output(
+        "overview-units-count",
+        "children",
+    ),
+    Output(
+        "overview-ticket-average",
+        "children",
+    ),
+    Output(
+        "overview-revenue-chart",
+        "figure",
+    ),
+    Output(
+        "overview-top-chart",
+        "figure",
+    ),
+    Output(
+        "overview-last-month",
+        "children",
+    ),
+    Output(
+        "overview-last-revenue",
+        "children",
+    ),
+    Output(
+        "overview-next-period",
+        "children",
+    ),
+    Output(
+        "overview-forecast-revenue",
+        "children",
+    ),
+    Output(
+        "overview-forecast-variation",
+        "children",
+    ),
+    Output(
+        "overview-forecast-variation",
+        "className",
+    ),
+    Output(
+        "overview-stock-critical",
+        "children",
+    ),
+    Output(
+        "overview-stock-warning",
+        "children",
+    ),
+    Output(
+        "overview-forecast-alert",
+        "children",
+    ),
+    Input(
+        "overview-refresh-interval",
+        "n_intervals",
+    ),
+    prevent_initial_call=True,
+)
+def atualizar_visao_geral_automaticamente(
+    n_intervals,
+):
+    try:
+        kpis = carregar_kpis()
+
+        receita_mensal = (
+            carregar_receita_mensal()
+        )
+
+        top_livros = (
+            carregar_top_livros()
+        )
+
+        grafico_receita = (
+            criar_grafico_receita_mensal(
+                receita_mensal
+            )
+        )
+
+        grafico_top = (
+            criar_grafico_top_livros(
+                top_livros
+            )
+        )
+
+        metricas = (
+            carregar_metricas_previsao()
+            or {}
+        )
+
+        stock = (
+            carregar_alertas_stock()
+        )
+
+        alertas_previsao = (
+            carregar_alertas_previsao()
+        )
+
+        criticos_stock = len(
+            stock[
+                stock["nivel"]
+                == "Crítico"
+            ]
+        )
+
+        atencao_stock = len(
+            stock[
+                stock["nivel"]
+                == "Atenção"
+            ]
+        )
+
+        alerta_critico = (
+            alertas_previsao[
+                alertas_previsao[
+                    "nivel"
+                ]
+                == "Crítico"
+            ]
+        )
+
+        mensagem_previsao = (
+            "Sem alertas críticos."
+        )
+
+        if not alerta_critico.empty:
+            mensagem_previsao = (
+                alerta_critico
+                .iloc[0]["mensagem"]
+            )
+
+        variacao = metricas.get(
+            "variacao_prevista_percent"
+        )
+
+        try:
+            variacao_numero = float(
+                variacao
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            variacao_numero = 0.0
+
+        classe_variacao = (
+            "value-negative"
+            if variacao_numero < 0
+            else "value-positive"
+        )
+
+        return (
+            formatar_euro(
+                kpis["receita_total"]
+            ),
+            formatar_inteiro(
+                kpis["numero_vendas"]
+            ),
+            formatar_inteiro(
+                kpis[
+                    "unidades_vendidas"
+                ]
+            ),
+            formatar_euro(
+                kpis["ticket_medio"]
+            ),
+            grafico_receita,
+            grafico_top,
+            formatar_mes(
+                metricas.get(
+                    "ultimo_mes_real"
+                )
+            ),
+            formatar_euro(
+                metricas.get(
+                    "ultima_receita_real",
+                    0,
+                )
+            ),
+            formatar_mes(
+                metricas.get(
+                    "proximo_mes"
+                )
+            ),
+            formatar_euro(
+                metricas.get(
+                    "receita_prevista_proximo_mes",
+                    0,
+                )
+            ),
+            formatar_percentagem(
+                variacao_numero
+            ),
+            classe_variacao,
+            (
+                f"{criticos_stock} "
+                "livro(s)"
+            ),
+            (
+                f"{atencao_stock} "
+                "livro(s)"
+            ),
+            mensagem_previsao,
+        )
+
+    except Exception as erro:
+        print(
+            "Erro na atualização automática "
+            "da Visão Geral:",
+            erro,
+        )
+
+        return (
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+        )
+
+
 # Controlos de quantidade
 
 def _ajustar_quantidade(valor_atual, acao, minimo=1):
@@ -3720,20 +4200,105 @@ def inferir_generos_api(assuntos):
     )
 
     palavras_por_genero = {
-        "Ficção": ["fiction", "novel", "romans nouvelles"],
-        "Distopia": ["dystopia", "dystopian"],
-        "Romance": ["romance", "love stories", "love romance", "love fiction"],
-        "Policial": ["detective", "mystery", "crime", "investigation", "police"],
-        "Poesia": ["poetry", "poems", "poesia"],
-        "Fantasia": ["fantasy", "magic", "fairies", "faerie", "fantastique"],
-        "Terror": ["horror", "ghost", "supernatural", "occult"],
-        "Ficção Científica": ["science fiction", "sci fi", "space opera"],
-        "Suspense": ["thriller", "suspense"],
-        "Autoajuda": ["self help", "personal development", "self improvement"],
-        "Biografia": ["biography", "autobiography", "memoir"],
-        "Infantil": ["children s fiction", "children fiction", "juvenile works"],
-        "Aventura": ["adventure", "action adventure"],
-        "Realismo Mágico": ["magical realism", "magic realism"],
+        "Ficção": [
+            "fiction",
+            "novel",
+            "romans nouvelles",
+            "ficcao",
+            "literatura ficcional",
+        ],
+        "Distopia": [
+            "dystopia",
+            "dystopian",
+            "distopia",
+        ],
+        "Romance": [
+            "romance",
+            "love stories",
+            "love romance",
+            "love fiction",
+            "historia de amor",
+        ],
+        "Policial": [
+            "detective",
+            "mystery",
+            "crime",
+            "investigation",
+            "police",
+            "policial",
+            "misterio",
+            "investigacao",
+        ],
+        "Poesia": [
+            "poetry",
+            "poems",
+            "poesia",
+            "poemas",
+        ],
+        "Fantasia": [
+            "fantasy",
+            "magic",
+            "fairies",
+            "faerie",
+            "fantastique",
+            "fantasia",
+            "magia",
+        ],
+        "Terror": [
+            "horror",
+            "ghost",
+            "supernatural",
+            "occult",
+            "terror",
+            "fantasmas",
+            "sobrenatural",
+        ],
+        "Ficção Científica": [
+            "science fiction",
+            "sci fi",
+            "space opera",
+            "ficcao cientifica",
+        ],
+        "Suspense": [
+            "thriller",
+            "suspense",
+        ],
+        "Autoajuda": [
+            "self help",
+            "personal development",
+            "self improvement",
+            "autoajuda",
+            "desenvolvimento pessoal",
+        ],
+        "Biografia": [
+            "biography",
+            "autobiography",
+            "memoir",
+            "biografia",
+            "autobiografia",
+            "memorias",
+        ],
+        "Infantil": [
+            "children s fiction",
+            "children fiction",
+            "juvenile works",
+            "infantil",
+            "ficcao infantil",
+            "literatura infantil",
+            "juvenil",
+            "literatura juvenil",
+        ],
+        "Aventura": [
+            "adventure",
+            "action adventure",
+            "aventura",
+            "aventuras",
+        ],
+        "Realismo Mágico": [
+            "magical realism",
+            "magic realism",
+            "realismo magico",
+        ],
     }
 
     generos_disponiveis = carregar_generos_gestao()

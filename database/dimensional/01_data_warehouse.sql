@@ -82,6 +82,4 @@ CREATE INDEX IF NOT EXISTS idx_fact_vendas_livro ON dw.fact_vendas(livro_key);
 CREATE INDEX IF NOT EXISTS idx_fact_vendas_pagamento ON dw.fact_vendas(pagamento_key);
 CREATE INDEX IF NOT EXISTS idx_fact_vendas_venda_origem ON dw.fact_vendas(venda_id_origem);
 
--- As tabelas dw.previsao_receita, dw.metricas_previsao,
--- dw.alertas_previsao e dw.alertas_stock são geradas pelos módulos Python
--- da pasta analysis/ e, por isso, não fazem parte do núcleo do modelo estrela.
+-- As tabelas dw.previsao_receita, dw.metricas_previsao, dw.alertas_previsao e dw.alertas_stock são geradas pelos módulos Python da pasta analysis/ e, por isso, não fazem parte do núcleo do modelo estrela.
