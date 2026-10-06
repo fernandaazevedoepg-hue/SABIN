@@ -8,3 +8,4 @@ openpyxl
 scikit-learn
 requests
 reportlab
+ddgs==9.16.0

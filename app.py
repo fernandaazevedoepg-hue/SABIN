@@ -29,7 +29,6 @@ from services.sales_service import (
     registar_venda,
 )
 from services.etl_service import (
-    executar_atualizacao_analitica,
     solicitar_atualizacao_analitica,
 )
 from services.customer_service import adicionar_cliente
@@ -3351,7 +3350,7 @@ def pagina_exportacoes():
                 children=[
                     html.H2("Exportações"),
                     html.P(
-                        "Exportação de dados e atualização das componentes analíticas do SABIN"
+                        "Exportação de dados e acesso ao projeto Power BI do SABIN"
                     ),
                 ],
             ),
@@ -3393,33 +3392,23 @@ def pagina_exportacoes():
                     html.Div(
                         className="sale-form-panel",
                         children=[
-                            html.H3("Atualização Analítica"),
+                            html.H3("Power BI"),
                             html.P(
-                                "Atualiza o Data Warehouse, o modelo preditivo e os alertas utilizados pelo SABIN.",
+                                "Abre o projeto do SABIN no Power BI Desktop.",
                                 className="form-help",
                             ),
                             html.Button(
-                                "Atualizar Dados",
-                                id="export-update-button",
-                                className="primary-button sale-submit-button",
-                                n_clicks=0,
-                            ),
-                            html.Button(
-                                "Atualizar SABIN e Abrir Power BI",
+                                "Abrir Power BI",
                                 id="export-powerbi-button",
-                                className="secondary-button",
+                                className="primary-button sale-submit-button",
                                 n_clicks=0,
                             ),
                         ],
                     ),
                 ],
             ),
-            dcc.Loading(
-                id="export-loading",
-                type="circle",
-                children=html.Div(
-                    id="export-message",
-                ),
+            html.Div(
+                id="export-message",
             ),
         ]
     )
@@ -3439,10 +3428,15 @@ app.layout = html.Div(
     className="app",
     children=[
         criar_sidebar(),
+        dcc.Store(
+            id="current-page-store",
+            storage_type="local",
+            data="visao-geral",
+        ),
         html.Main(
             id="page-content",
             className="content",
-            children=pagina_visao_geral(),
+            children=html.Div(),
         ),
     ],
 )
@@ -3812,15 +3806,7 @@ def alternar_menu_analises(
 
 
 @app.callback(
-    Output("page-content", "children"),
-    Output("btn-visao-geral", "className"),
-    Output("btn-venda", "className"),
-    Output("btn-reservas", "className"),
-    Output("btn-gestao-catalogo", "className"),
-    Output("btn-catalogo", "className"),
-    Output("btn-previsoes", "className"),
-    Output("btn-stock", "className"),
-    Output("btn-exportacoes", "className"),
+    Output("current-page-store", "data"),
     Input("btn-visao-geral", "n_clicks"),
     Input("btn-venda", "n_clicks"),
     Input("btn-reservas", "n_clicks"),
@@ -3829,8 +3815,9 @@ def alternar_menu_analises(
     Input("btn-previsoes", "n_clicks"),
     Input("btn-stock", "n_clicks"),
     Input("btn-exportacoes", "n_clicks"),
+    prevent_initial_call=True,
 )
-def navegar(
+def guardar_pagina_atual(
     visao,
     venda,
     reservas,
@@ -3840,14 +3827,44 @@ def navegar(
     stock,
     exportacoes,
 ):
-    botao = ctx.triggered_id
+    paginas_por_botao = {
+        "btn-visao-geral": "visao-geral",
+        "btn-venda": "venda",
+        "btn-reservas": "reservas",
+        "btn-gestao-catalogo": "gestao-catalogo",
+        "btn-catalogo": "catalogo",
+        "btn-previsoes": "previsoes",
+        "btn-stock": "stock",
+        "btn-exportacoes": "exportacoes",
+    }
 
+    return paginas_por_botao.get(
+        ctx.triggered_id,
+        no_update,
+    )
+
+
+@app.callback(
+    Output("page-content", "children"),
+    Output("btn-visao-geral", "className"),
+    Output("btn-venda", "className"),
+    Output("btn-reservas", "className"),
+    Output("btn-gestao-catalogo", "className"),
+    Output("btn-catalogo", "className"),
+    Output("btn-previsoes", "className"),
+    Output("btn-stock", "className"),
+    Output("btn-exportacoes", "className"),
+    Input("current-page-store", "data"),
+)
+def navegar(
+    pagina_atual,
+):
     visao_normal = "menu-button"
     visao_ativo = "menu-button active"
     submenu_normal = "submenu-button"
     submenu_ativo = "submenu-button active"
 
-    if botao == "btn-venda":
+    if pagina_atual == "venda":
         return (
             pagina_registar_venda(),
             visao_normal,
@@ -3860,7 +3877,7 @@ def navegar(
             submenu_normal,
         )
 
-    if botao == "btn-reservas":
+    if pagina_atual == "reservas":
         return (
             pagina_reservas(),
             visao_normal,
@@ -3873,7 +3890,7 @@ def navegar(
             submenu_normal,
         )
 
-    if botao == "btn-gestao-catalogo":
+    if pagina_atual == "gestao-catalogo":
         return (
             pagina_gestao_catalogo(),
             visao_normal,
@@ -3886,7 +3903,7 @@ def navegar(
             submenu_normal,
         )
 
-    if botao == "btn-catalogo":
+    if pagina_atual == "catalogo":
         return (
             pagina_catalogo(),
             visao_normal,
@@ -3899,7 +3916,7 @@ def navegar(
             submenu_normal,
         )
 
-    if botao == "btn-previsoes":
+    if pagina_atual == "previsoes":
         return (
             pagina_previsoes(),
             visao_normal,
@@ -3912,7 +3929,7 @@ def navegar(
             submenu_normal,
         )
 
-    if botao == "btn-stock":
+    if pagina_atual == "stock":
         return (
             pagina_stock(),
             visao_normal,
@@ -3925,7 +3942,7 @@ def navegar(
             submenu_normal,
         )
 
-    if botao == "btn-exportacoes":
+    if pagina_atual == "exportacoes":
         return (
             pagina_exportacoes(),
             visao_normal,
@@ -3959,14 +3976,12 @@ def navegar(
     Output("export-message", "children"),
     Input("export-excel-button", "n_clicks"),
     Input("export-pdf-button", "n_clicks"),
-    Input("export-update-button", "n_clicks"),
     Input("export-powerbi-button", "n_clicks"),
     prevent_initial_call=True,
 )
 def processar_exportacoes(
     excel_clicks,
     pdf_clicks,
-    update_clicks,
     powerbi_clicks,
 ):
     acao = ctx.triggered_id
@@ -3996,27 +4011,14 @@ def processar_exportacoes(
                 ),
             )
 
-        if acao == "export-update-button":
-            executar_atualizacao_analitica()
-
-            return (
-                no_update,
-                no_update,
-                html.Div(
-                    "Data Warehouse, previsões e alertas atualizados com sucesso.",
-                    className="sale-success-message",
-                ),
-            )
-
         if acao == "export-powerbi-button":
-            executar_atualizacao_analitica()
             caminho = abrir_power_bi()
 
             return (
                 no_update,
                 no_update,
                 html.Div(
-                    f"Dados atualizados e Power BI aberto: {caminho.name}",
+                    f"Power BI aberto: {caminho.name}",
                     className="sale-success-message",
                 ),
             )

@@ -3,6 +3,7 @@ import re
 import json
 import unicodedata
 from functools import lru_cache
+from difflib import SequenceMatcher
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from html import unescape
 from html.parser import HTMLParser
@@ -379,21 +380,129 @@ def _obter_json(url, parametros, timeout=HTTP_TIMEOUT_CURTO):
     return resposta.json()
 
 
-def _obter_html(url, timeout=HTTP_TIMEOUT_CURTO):
+def _pontuar_texto_corrompido(texto):
+    valor = str(
+        texto or ""
+    )
+
+    marcadores = (
+        "\ufffd",
+        "Ã¡",
+        "Ã¢",
+        "Ã£",
+        "Ã©",
+        "Ãª",
+        "Ã­",
+        "Ã³",
+        "Ã´",
+        "Ãµ",
+        "Ãº",
+        "Ã§",
+        "Â ",
+        "â€“",
+        "â€”",
+        "â€™",
+        "â€œ",
+        "â€",
+    )
+
+    pontos = (
+        valor.count("\ufffd")
+        * 50
+    )
+
+    for marcador in marcadores:
+        pontos += (
+            valor.count(
+                marcador
+            )
+            * 10
+        )
+
+    return pontos
+
+
+def _decodificar_resposta_http(
+    resposta,
+):
+    conteudo = resposta.content
+
+    codificacoes = []
+
+    for codificacao in (
+        resposta.encoding,
+        resposta.apparent_encoding,
+        "utf-8",
+        "cp1252",
+        "latin-1",
+    ):
+        if (
+            codificacao
+            and codificacao.lower()
+            not in {
+                item.lower()
+                for item
+                in codificacoes
+            }
+        ):
+            codificacoes.append(
+                codificacao
+            )
+
+    candidatos = []
+
+    for codificacao in codificacoes:
+        try:
+            texto = conteudo.decode(
+                codificacao,
+                errors="replace",
+            )
+        except (
+            LookupError,
+            UnicodeDecodeError,
+        ):
+            continue
+
+        candidatos.append(
+            (
+                _pontuar_texto_corrompido(
+                    texto
+                ),
+                texto,
+            )
+        )
+
+    if not candidatos:
+        return conteudo.decode(
+            "utf-8",
+            errors="replace",
+        )
+
+    candidatos.sort(
+        key=lambda item: item[0]
+    )
+
+    return candidatos[0][1]
+
+
+def _obter_html(
+    url,
+    timeout=HTTP_TIMEOUT_CURTO,
+):
     resposta = HTTP_SESSION.get(
         url,
         timeout=timeout,
         allow_redirects=True,
     )
+
     resposta.raise_for_status()
 
-    if not resposta.encoding:
-        resposta.encoding = (
-            resposta.apparent_encoding
-            or "utf-8"
-        )
-
-    return resposta.text, resposta.url
+    return (
+        _decodificar_resposta_http(
+            resposta
+        ),
+        resposta.url,
+    )
 
 
 def _obter_texto_reader(url, timeout=HTTP_TIMEOUT_READER):
@@ -425,9 +534,120 @@ def _sem_acentos(valor):
     )
 
 
+def _tentar_corrigir_mojibake(
+    texto,
+):
+    original = str(
+        texto or ""
+    )
+
+    candidatos = [
+        original
+    ]
+
+    for codificacao in (
+        "latin-1",
+        "cp1252",
+    ):
+        try:
+            corrigido = (
+                original
+                .encode(
+                    codificacao
+                )
+                .decode(
+                    "utf-8"
+                )
+            )
+
+            candidatos.append(
+                corrigido
+            )
+        except (
+            UnicodeEncodeError,
+            UnicodeDecodeError,
+        ):
+            pass
+
+    candidatos.sort(
+        key=_pontuar_texto_corrompido
+    )
+
+    return candidatos[0]
+
+
+def _limpar_texto_exibicao(valor):
+    texto = str(
+        valor or ""
+    )
+
+    for _ in range(3):
+        convertido = unescape(
+            texto
+        )
+
+        if convertido == texto:
+            break
+
+        texto = convertido
+
+    texto = (
+        _tentar_corrigir_mojibake(
+            texto
+        )
+    )
+
+    texto = texto.replace(
+        "\xa0",
+        " ",
+    )
+
+    # [Booksmile][23] -> Booksmile
+    texto = re.sub(
+        r"\[\s*([^\]]+?)\s*\]\[\d+\]",
+        r"\1",
+        texto,
+    )
+
+    # [Booksmile](https://...) -> Booksmile
+    texto = re.sub(
+        r"\[([^\]]+)\]\([^)]+\)",
+        r"\1",
+        texto,
+    )
+
+    texto = re.sub(
+        r"<[^>]+>",
+        " ",
+        texto,
+    )
+
+    texto = re.sub(
+        r"\s+",
+        " ",
+        texto,
+    )
+
+    return texto.strip(
+        " \t\r\n|"
+    )
+
+
 def _normalizar_texto(valor):
-    texto = _sem_acentos(valor).lower()
-    texto = re.sub(r"\s+", " ", texto)
+    texto = _limpar_texto_exibicao(
+        valor
+    )
+
+    texto = _sem_acentos(
+        texto
+    ).lower()
+
+    texto = re.sub(
+        r"\s+",
+        " ",
+        texto,
+    )
+
     return texto.strip()
 
 
@@ -991,10 +1211,18 @@ def _linha_valor(texto, rotulos):
         for padrao in padroes:
             encontrado = re.search(padrao, texto)
             if encontrado:
-                valor = encontrado.group(1).strip(" \t\n|:-")
-                valor = re.sub(r"\s+", " ", valor)
+                valor = encontrado.group(1).strip(
+                    " \t\n|:-"
+                )
 
-                if valor and valor not in {"-", "—"}:
+                valor = _limpar_texto_exibicao(
+                    valor
+                )
+
+                if valor and valor not in {
+                    "-",
+                    "—",
+                }:
                     return valor
 
     return None
@@ -1279,8 +1507,13 @@ def _remover_creditos_nao_autor(autores, texto):
     vistos = set()
 
     for autor in autores:
-        nome = str(autor or "").strip()
-        chave = _normalizar_texto(nome)
+        nome = _limpar_texto_exibicao(
+            autor
+        )
+
+        chave = _normalizar_texto(
+            nome
+        )
 
         if (
             nome
@@ -1296,28 +1529,1046 @@ def _remover_creditos_nao_autor(autores, texto):
                 )
             )
         ):
-            vistos.add(chave)
-            resultado.append(nome)
+            vistos.add(
+                chave
+            )
+            resultado.append(
+                nome
+            )
 
     return resultado
+
+
+def _contem_lixo_metadado(
+    valor,
+):
+    normalizado = _normalizar_texto(
+        valor
+    )
+
+    marcadores = (
+        "using the web site",
+        "using this website",
+        "you confirm",
+        "you have read",
+        "you agree",
+        "agreed to be bound",
+        "terms and conditions",
+        "privacy policy",
+        "cookie policy",
+        "cookies",
+        "accept all",
+        "eur ",
+        " eur",
+        "preco ",
+        "price ",
+        "stock ",
+        "adicionar ao carrinho",
+        "add to cart",
+        "comprar",
+        "buy now",
+        "isbn ",
+        "ean ",
+        "http://",
+        "https://",
+        "www.",
+    )
+
+    return any(
+        marcador in normalizado
+        for marcador in marcadores
+    )
+
+
+def _parece_nome_autor(
+    valor,
+):
+    nome = _limpar_texto_exibicao(
+        valor
+    )
+
+    if not nome:
+        return False
+
+    if len(nome) > 90:
+        return False
+
+    if _contem_lixo_metadado(
+        nome
+    ):
+        return False
+
+    if re.search(
+        r"[$€£]|https?://|\d",
+        nome,
+        flags=re.I,
+    ):
+        return False
+
+    normalizado = _normalizar_texto(
+        nome
+    )
+
+    termos_invalidos = (
+        " um banana",
+        " uma banana",
+        " livro ",
+        " ebook ",
+        " edition",
+        " edicao",
+        " volume ",
+        " vol ",
+        " preco ",
+        " price ",
+        " stock ",
+    )
+
+    if any(
+        termo in f" {normalizado} "
+        for termo in termos_invalidos
+    ):
+        return False
+
+    palavras = [
+        parte
+        for parte in re.split(
+            r"\s+",
+            nome,
+        )
+        if parte
+    ]
+
+    if not (
+        1
+        <= len(palavras)
+        <= 9
+    ):
+        return False
+
+    letras = sum(
+        caractere.isalpha()
+        for caractere in nome
+    )
+
+    if letras < 2:
+        return False
+
+    proporcao_letras = (
+        letras
+        / max(
+            len(nome),
+            1,
+        )
+    )
+
+    if proporcao_letras < 0.55:
+        return False
+
+    return True
+
+
+def _limpar_autores_validos(
+    autores,
+):
+    resultado = []
+    vistos = set()
+
+    for autor in (
+        autores
+        or []
+    ):
+        nome = _limpar_texto_exibicao(
+            autor
+        )
+
+        # Algumas fontes colam preços, título ou outros campos ao autor.
+        nome = re.split(
+            r"\s+(?:EUR|€|USD|\$)\s*[\d,.]+",
+            nome,
+            maxsplit=1,
+            flags=re.I,
+        )[0].strip()
+
+        if "," in nome:
+            partes_virgula = [
+                parte.strip()
+                for parte in nome.split(",")
+                if parte.strip()
+            ]
+
+            if partes_virgula:
+                primeira = partes_virgula[0]
+                resto = " ".join(
+                    partes_virgula[1:]
+                )
+
+                # "Jeff Kinney, um Banana 1" -> "Jeff Kinney".
+                if (
+                    resto
+                    and (
+                        re.search(
+                            r"\d",
+                            resto,
+                        )
+                        or any(
+                            termo in _normalizar_texto(
+                                resto
+                            )
+                            for termo in (
+                                "banana",
+                                "livro",
+                                "ebook",
+                                "edition",
+                                "edicao",
+                                "volume",
+                            )
+                        )
+                    )
+                ):
+                    nome = primeira
+
+        if not _parece_nome_autor(
+            nome
+        ):
+            continue
+
+        chave = _normalizar_texto(
+            nome
+        )
+
+        if chave in vistos:
+            continue
+
+        vistos.add(
+            chave
+        )
+        resultado.append(
+            nome
+        )
+
+    return resultado
+
+
+def _limpar_editora(
+    valor,
+):
+    editora = (
+        _limpar_texto_exibicao(
+            valor
+        )
+    )
+
+    if not editora:
+        return None
+
+    editora = re.sub(
+        r"^\s*(?:editora|editor|publisher|editorial)\s*:?\s*",
+        "",
+        editora,
+        flags=re.I,
+    )
+
+    # Remove ano colado no final: "Booksmile, 2014".
+    editora = re.sub(
+        r"\s*[,;|-]?\s*\b(?:19|20)\d{2}\b\s*$",
+        "",
+        editora,
+    )
+
+    editora = editora.strip(
+        " [](){}.,;|-"
+    )
+
+    if not editora:
+        return None
+
+    if len(editora) > 90:
+        return None
+
+    if _contem_lixo_metadado(
+        editora
+    ):
+        return None
+
+    if re.search(
+        r"https?://|[$€£]",
+        editora,
+        flags=re.I,
+    ):
+        return None
+
+    return editora
+
+
+def _limpar_titulo_livro(
+    valor,
+):
+    titulo = (
+        _limpar_texto_exibicao(
+            valor
+        )
+    )
+
+    if not titulo:
+        return None
+
+    titulo = re.sub(
+        r"\s*\((?:Portuguese|English|Spanish|French)\s+Edition\)\s*$",
+        "",
+        titulo,
+        flags=re.I,
+    )
+
+    titulo = re.sub(
+        r"\s*[-|]\s*(?:WOOK|Bertrand|FNAC|Amazon|Google Books).*$",
+        "",
+        titulo,
+        flags=re.I,
+    )
+
+    titulo = titulo.strip(
+        " .|:-"
+    )
+
+    if _titulo_invalido(
+        titulo
+    ):
+        return None
+
+    if len(titulo) > 180:
+        return None
+
+    return titulo
+
+
+def _sanitizar_resultado_web(
+    dados,
+):
+    if not dados:
+        return None
+
+    resultado = dict(
+        dados
+    )
+
+    resultado["titulo"] = (
+        _limpar_titulo_livro(
+            resultado.get(
+                "titulo"
+            )
+        )
+    )
+
+    resultado["autores"] = (
+        _limpar_autores_validos(
+            resultado.get(
+                "autores"
+            )
+            or []
+        )
+    )
+
+    resultado["editora"] = (
+        _limpar_editora(
+            resultado.get(
+                "editora"
+            )
+        )
+    )
+
+    data_publicacao = (
+        resultado.get(
+            "data_publicacao"
+        )
+    )
+
+    resultado[
+        "data_publicacao"
+    ] = (
+        _normalizar_data_catalogo(
+            data_publicacao
+        )
+        if data_publicacao
+        else None
+    )
+
+    generos = []
+
+    for genero in (
+        resultado.get(
+            "generos"
+        )
+        or []
+    ):
+        for normalizado in (
+            _generos_da_classificacao(
+                genero
+            )
+            or []
+        ):
+            if (
+                normalizado
+                not in generos
+            ):
+                generos.append(
+                    normalizado
+                )
+
+    resultado[
+        "generos"
+    ] = generos[:3]
+
+    return resultado
+
+
+def _titulo_para_comparacao(
+    titulo,
+):
+    chave = _normalizar_texto(
+        titulo
+    )
+
+    chave = re.sub(
+        r"\b(?:ebook|livro|book|edicao|edition)\b",
+        " ",
+        chave,
+    )
+
+    chave = re.sub(
+        r"\s+",
+        " ",
+        chave,
+    ).strip()
+
+    return chave
+
+
+def _titulos_semelhantes(
+    titulo_a,
+    titulo_b,
+):
+    a = _titulo_para_comparacao(
+        titulo_a
+    )
+    b = _titulo_para_comparacao(
+        titulo_b
+    )
+
+    if not a or not b:
+        return False
+
+    if (
+        a in b
+        or b in a
+    ):
+        return True
+
+    return (
+        SequenceMatcher(
+            None,
+            a,
+            b,
+        ).ratio()
+        >= 0.72
+    )
+
+
+def _escolher_titulo_consenso(
+    resultados,
+):
+    candidatos = []
+
+    for resultado in resultados:
+        titulo = _limpar_titulo_livro(
+            resultado.get(
+                "titulo"
+            )
+        )
+
+        if (
+            titulo
+            and titulo
+            not in candidatos
+        ):
+            candidatos.append(
+                titulo
+            )
+
+    if not candidatos:
+        return None
+
+    def pontuar(
+        candidato,
+    ):
+        apoio = sum(
+            1
+            for outro
+            in candidatos
+            if _titulos_semelhantes(
+                candidato,
+                outro,
+            )
+        )
+
+        chave = _titulo_para_comparacao(
+            candidato
+        )
+
+        palavras = [
+            palavra
+            for palavra in chave.split()
+            if palavra
+        ]
+
+        bonus_completude = min(
+            len(palavras),
+            12,
+        )
+
+        # Se o título é apenas o início de outro título claramente
+        # mais completo, tratamo-lo como truncado.
+        penalizacao_truncado = 0
+
+        for outro in candidatos:
+            if outro == candidato:
+                continue
+
+            chave_outro = (
+                _titulo_para_comparacao(
+                    outro
+                )
+            )
+
+            if (
+                chave
+                and chave_outro.startswith(
+                    chave + " "
+                )
+                and len(
+                    chave_outro.split()
+                )
+                >= len(palavras) + 2
+            ):
+                penalizacao_truncado = 12
+                break
+
+        # Títulos excessivamente longos costumam trazer subtítulos,
+        # nomes do site ou texto promocional.
+        penalizacao_longo = max(
+            0,
+            len(palavras) - 15,
+        )
+
+        return (
+            apoio * 100
+            + bonus_completude * 4
+            - penalizacao_truncado * 10
+            - penalizacao_longo * 5
+        )
+
+    return max(
+        candidatos,
+        key=pontuar,
+    )
+
+
+def _escolher_valor_consenso(
+    valores,
+):
+    limpos = [
+        valor
+        for valor in valores
+        if valor
+    ]
+
+    if not limpos:
+        return None
+
+    contagens = {}
+
+    original = {}
+
+    for valor in limpos:
+        chave = _normalizar_texto(
+            valor
+        )
+
+        if not chave:
+            continue
+
+        contagens[chave] = (
+            contagens.get(
+                chave,
+                0,
+            )
+            + 1
+        )
+
+        original.setdefault(
+            chave,
+            valor,
+        )
+
+    if not contagens:
+        return None
+
+    chave_melhor = max(
+        contagens,
+        key=lambda chave: (
+            contagens[chave],
+            -len(
+                original[chave]
+            ),
+        ),
+    )
+
+    return original[
+        chave_melhor
+    ]
+
+
+def _escolher_data_consenso(
+    resultados,
+):
+    datas = []
+
+    for resultado in resultados:
+        valor = resultado.get(
+            "data_publicacao"
+        )
+
+        if not valor:
+            continue
+
+        normalizada = (
+            _normalizar_data_catalogo(
+                valor
+            )
+        )
+
+        if normalizada:
+            datas.append(
+                normalizada
+            )
+
+    if not datas:
+        return None
+
+    por_ano = {}
+
+    for data in datas:
+        encontrado = re.search(
+            r"\b(19\d{2}|20\d{2})\b",
+            str(data),
+        )
+
+        if not encontrado:
+            continue
+
+        ano = int(
+            encontrado.group(1)
+        )
+
+        por_ano.setdefault(
+            ano,
+            []
+        ).append(
+            data
+        )
+
+    if not por_ano:
+        return datas[0]
+
+    maior_quantidade = max(
+        len(valores)
+        for valores
+        in por_ano.values()
+    )
+
+    anos_candidatos = [
+        ano
+        for ano, valores
+        in por_ano.items()
+        if len(valores)
+        == maior_quantidade
+    ]
+
+    # Num empate entre anos, privilegia o mais antigo,
+    # pois tende a corresponder à edição associada ao ISBN.
+    ano = min(
+        anos_candidatos
+    )
+
+    datas_ano = por_ano[
+        ano
+    ]
+
+    contagens = {}
+
+    for data in datas_ano:
+        contagens[data] = (
+            contagens.get(
+                data,
+                0,
+            )
+            + 1
+        )
+
+    maior_frequencia = max(
+        contagens.values()
+    )
+
+    mais_frequentes = [
+        data
+        for data, quantidade
+        in contagens.items()
+        if quantidade
+        == maior_frequencia
+    ]
+
+    if len(mais_frequentes) == 1:
+        escolhida = (
+            mais_frequentes[0]
+        )
+    else:
+        # 01/01 é muitas vezes um placeholder criado quando a fonte
+        # informou apenas o ano. Se houver uma data mais precisa,
+        # prefere-a.
+        precisas = [
+            data
+            for data
+            in mais_frequentes
+            if not data.endswith(
+                "-01-01"
+            )
+        ]
+
+        escolhida = (
+            precisas[0]
+            if precisas
+            else mais_frequentes[0]
+        )
+
+    # Mesmo que 01/01 tenha uma ocorrência a mais, se só representa
+    # "ano conhecido" e houver uma data mensal no mesmo ano,
+    # a data mensal é mais informativa.
+    if escolhida.endswith(
+        "-01-01"
+    ):
+        precisas_mesmo_ano = [
+            data
+            for data
+            in datas_ano
+            if not data.endswith(
+                "-01-01"
+            )
+        ]
+
+        if precisas_mesmo_ano:
+            escolhida = max(
+                precisas_mesmo_ano,
+                key=lambda data: (
+                    contagens.get(
+                        data,
+                        0,
+                    ),
+                    data,
+                ),
+            )
+
+    return escolhida
+
+
+def _consolidar_resultados_web(
+    resultados,
+    isbn_limpo,
+):
+    limpos = []
+
+    for resultado in resultados:
+        limpo = _sanitizar_resultado_web(
+            resultado
+        )
+
+        if not limpo:
+            continue
+
+        if not _resultado_web_valido(
+            limpo
+        ):
+            continue
+
+        limpos.append(
+            limpo
+        )
+
+    if not limpos:
+        return None
+
+    limpos.sort(
+        key=_pontuar_metadados,
+        reverse=True,
+    )
+
+    melhor_individual = limpos[0]
+
+    titulo = (
+        _escolher_titulo_consenso(
+            limpos
+        )
+        or melhor_individual.get(
+            "titulo"
+        )
+    )
+
+    # Autores: usa consenso entre fontes quando possível.
+    contagem_autores = {}
+    forma_autor = {}
+
+    for resultado in limpos:
+        for autor in (
+            resultado.get(
+                "autores"
+            )
+            or []
+        ):
+            chave = _normalizar_texto(
+                autor
+            )
+
+            if not chave:
+                continue
+
+            contagem_autores[
+                chave
+            ] = (
+                contagem_autores.get(
+                    chave,
+                    0,
+                )
+                + 1
+            )
+
+            forma_autor.setdefault(
+                chave,
+                autor,
+            )
+
+    autores = []
+
+    if contagem_autores:
+        maior = max(
+            contagem_autores.values()
+        )
+
+        limite = (
+            2
+            if maior >= 2
+            else 1
+        )
+
+        chaves_autores = [
+            chave
+            for chave, quantidade
+            in contagem_autores.items()
+            if quantidade >= limite
+        ]
+
+        # Se todos aparecem uma única vez, usa apenas os autores
+        # do melhor resultado, evitando juntar lixo de páginas diferentes.
+        if maior == 1:
+            autores = (
+                melhor_individual.get(
+                    "autores"
+                )
+                or []
+            )
+        else:
+            autores = [
+                forma_autor[
+                    chave
+                ]
+                for chave
+                in chaves_autores
+            ]
+
+    editora = (
+        _escolher_valor_consenso(
+            [
+                resultado.get(
+                    "editora"
+                )
+                for resultado
+                in limpos
+            ]
+        )
+        or melhor_individual.get(
+            "editora"
+        )
+    )
+
+    data_publicacao = (
+        _escolher_data_consenso(
+            limpos
+        )
+        or melhor_individual.get(
+            "data_publicacao"
+        )
+    )
+
+    contagem_generos = {}
+
+    for resultado in limpos:
+        for genero in (
+            resultado.get(
+                "generos"
+            )
+            or []
+        ):
+            contagem_generos[
+                genero
+            ] = (
+                contagem_generos.get(
+                    genero,
+                    0,
+                )
+                + 1
+            )
+
+    generos = []
+
+    if contagem_generos:
+        maior_genero = max(
+            contagem_generos.values()
+        )
+
+        generos = [
+            genero
+            for genero, quantidade
+            in sorted(
+                contagem_generos.items(),
+                key=lambda item: (
+                    -item[1],
+                    item[0],
+                ),
+            )
+            if (
+                quantidade >= 2
+                or maior_genero == 1
+            )
+        ][:3]
+
+    if not generos:
+        generos = (
+            melhor_individual.get(
+                "generos"
+            )
+            or []
+        )[:3]
+
+    resultado_final = {
+        "sucesso": True,
+        "origem": "Pesquisa Web",
+        "titulo": titulo,
+        "isbn": isbn_limpo,
+        "autores": (
+            _limpar_autores_validos(
+                autores
+            )
+        ),
+        "editora": (
+            _limpar_editora(
+                editora
+            )
+        ),
+        "data_publicacao": (
+            _normalizar_data_catalogo(
+                data_publicacao
+            )
+            if data_publicacao
+            else None
+        ),
+        "generos": generos,
+        "url_origem": (
+            melhor_individual.get(
+                "url_origem"
+            )
+        ),
+        "fontes_web": [
+            resultado.get(
+                "url_origem"
+            )
+            for resultado
+            in limpos
+            if resultado.get(
+                "url_origem"
+            )
+        ],
+    }
+
+    return (
+        resultado_final
+        if _resultado_web_valido(
+            resultado_final
+        )
+        else melhor_individual
+    )
 
 
 def _pontuar_metadados(dados):
     if not dados:
         return -100
 
-    if _titulo_invalido(dados.get("titulo")):
+    sanitizado = (
+        _sanitizar_resultado_web(
+            dados
+        )
+    )
+
+    if not sanitizado:
+        return -100
+
+    titulo = sanitizado.get(
+        "titulo"
+    )
+
+    if _titulo_invalido(
+        titulo
+    ):
         return -100
 
     pontos = 5
 
-    if dados.get("autores"):
-        pontos += 4
-    if dados.get("editora"):
+    autores = sanitizado.get(
+        "autores"
+    ) or []
+
+    if autores:
+        pontos += 5
+
+    if sanitizado.get(
+        "editora"
+    ):
+        pontos += 3
+
+    if sanitizado.get(
+        "data_publicacao"
+    ):
         pontos += 2
-    if dados.get("data_publicacao"):
+
+    if sanitizado.get(
+        "generos"
+    ):
         pontos += 2
-    if dados.get("generos"):
+
+    if (
+        sanitizado.get(
+            "url_origem"
+        )
+        and sanitizado.get(
+            "isbn"
+        )
+    ):
         pontos += 1
 
     return pontos
@@ -1327,15 +2578,38 @@ def _resultado_web_valido(dados):
     if not dados:
         return False
 
-    if _titulo_invalido(dados.get("titulo")):
+    sanitizado = (
+        _sanitizar_resultado_web(
+            dados
+        )
+    )
+
+    if not sanitizado:
         return False
 
-    # Um título sozinho não chega. Exigimos pelo menos autor ou editora,
-    # evitando tratar uma página Cloudflare/pesquisa como livro real.
-    if not dados.get("autores") and not dados.get("editora"):
+    if _titulo_invalido(
+        sanitizado.get(
+            "titulo"
+        )
+    ):
         return False
 
-    return _pontuar_metadados(dados) >= 9
+    if (
+        not sanitizado.get(
+            "autores"
+        )
+        and not sanitizado.get(
+            "editora"
+        )
+    ):
+        return False
+
+    return (
+        _pontuar_metadados(
+            sanitizado
+        )
+        >= 9
+    )
 
 
 def _extrair_dados_texto(texto, url, isbn, origem="Pesquisa Web"):
@@ -1486,7 +2760,19 @@ def _extrair_dados_texto(texto, url, isbn, origem="Pesquisa Web"):
         "url_origem": url,
     }
 
-    return dados if _resultado_web_valido(dados) else None
+    dados = (
+        _sanitizar_resultado_web(
+            dados
+        )
+    )
+
+    return (
+        dados
+        if _resultado_web_valido(
+            dados
+        )
+        else None
+    )
 
 
 def _extrair_dados_html(html, url, isbn, origem="Pesquisa Web"):
@@ -1551,7 +2837,15 @@ def _extrair_dados_html(html, url, isbn, origem="Pesquisa Web"):
                 if not dados_json.get(campo) and dados_texto.get(campo):
                     dados_json[campo] = dados_texto[campo]
 
-        if _resultado_web_valido(dados_json):
+        dados_json = (
+            _sanitizar_resultado_web(
+                dados_json
+            )
+        )
+
+        if _resultado_web_valido(
+            dados_json
+        ):
             return dados_json
 
     # Fallback normal de texto da própria ficha.
@@ -1607,7 +2901,19 @@ def _extrair_dados_html(html, url, isbn, origem="Pesquisa Web"):
         "url_origem": url,
     }
 
-    return dados if _resultado_web_valido(dados) else None
+    dados = (
+        _sanitizar_resultado_web(
+            dados
+        )
+    )
+
+    return (
+        dados
+        if _resultado_web_valido(
+            dados
+        )
+        else None
+    )
 
 
 # Descoberta de páginas por ISBN
@@ -1693,7 +2999,7 @@ def _pesquisar_web_ddgs(isbn):
         f'"{isbn_limpo}" book',
     ]
 
-    links = []
+    candidatos = []
     vistos = set()
 
     try:
@@ -1746,14 +3052,33 @@ def _pesquisar_web_ddgs(isbn):
             vistos.add(
                 href
             )
-            links.append(
-                href
+
+            candidatos.append(
+                {
+                    "href": href,
+                    "title": (
+                        _limpar_texto_exibicao(
+                            resultado.get(
+                                "title"
+                            )
+                            or ""
+                        )
+                    ),
+                    "body": (
+                        _limpar_texto_exibicao(
+                            resultado.get(
+                                "body"
+                            )
+                            or ""
+                        )
+                    ),
+                }
             )
 
-        if len(links) >= 25:
+        if len(candidatos) >= 25:
             break
 
-    return links[:30]
+    return candidatos[:30]
 
 
 def _descobrir_links_produto(isbn):
@@ -1773,19 +3098,371 @@ def _descobrir_links_produto(isbn):
     return links
 
 
+def _limpar_titulo_resultado_busca(
+    valor,
+):
+    titulo = (
+        _limpar_texto_exibicao(
+            valor
+        )
+    )
+
+    if not titulo:
+        return None
+
+    # Remove segmentos finais típicos do site/loja.
+    segmentos = [
+        segmento.strip()
+        for segmento in re.split(
+            r"\s+[|–—-]\s+",
+            titulo,
+        )
+        if segmento.strip()
+    ]
+
+    while (
+        len(segmentos) > 1
+        and any(
+            termo
+            in _normalizar_texto(
+                segmentos[-1]
+            )
+            for termo in (
+                "wook",
+                "bertrand",
+                "fnac",
+                "amazon",
+                "penguin",
+                "livros",
+                "livro",
+                "ebook",
+                "online",
+                "store",
+                "shop",
+            )
+        )
+    ):
+        segmentos.pop()
+
+    titulo = " - ".join(
+        segmentos
+    ).strip()
+
+    # "Título de Jeff Kinney" -> guarda só o título;
+    # o autor é extraído separadamente.
+    encontrado = re.match(
+        r"^(.+?)\s+de\s+([A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][A-Za-zÀ-ÿ'’.\- ]{2,70})$",
+        titulo,
+    )
+
+    if encontrado:
+        possivel_autor = (
+            encontrado.group(2)
+            .strip()
+        )
+
+        if _parece_nome_autor(
+            possivel_autor
+        ):
+            titulo = (
+                encontrado.group(1)
+                .strip()
+            )
+
+    return _limpar_titulo_livro(
+        titulo
+    )
+
+
+def _extrair_autor_resultado_busca(
+    titulo_busca,
+    corpo_busca,
+):
+    titulo = (
+        _limpar_texto_exibicao(
+            titulo_busca
+        )
+    )
+
+    corpo = (
+        _limpar_texto_exibicao(
+            corpo_busca
+        )
+    )
+
+    candidatos = []
+
+    if titulo:
+        encontrado = re.search(
+            r"\s+de\s+([A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][A-Za-zÀ-ÿ'’.\- ]{2,70})(?:\s+[|–—-]|$)",
+            titulo,
+        )
+
+        if encontrado:
+            candidatos.append(
+                encontrado.group(1)
+            )
+
+    if corpo:
+        padroes = [
+            r"Autor(?:\(a\)|es)?\s*:?\s*([A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][A-Za-zÀ-ÿ'’.\- ]{2,70})",
+            r"Author\s*:?\s*([A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][A-Za-zÀ-ÿ'’.\- ]{2,70})",
+        ]
+
+        for padrao in padroes:
+            encontrado = re.search(
+                padrao,
+                corpo,
+                flags=re.I,
+            )
+
+            if encontrado:
+                valor = re.split(
+                    r"\b(?:ISBN|Editora|Editor|Publisher|Data|Date|Páginas|Paginas|Género|Genero)\b",
+                    encontrado.group(1),
+                    maxsplit=1,
+                    flags=re.I,
+                )[0].strip(
+                    " .,:;|-"
+                )
+
+                candidatos.append(
+                    valor
+                )
+
+    limpos = (
+        _limpar_autores_validos(
+            candidatos
+        )
+    )
+
+    return limpos[:3]
+
+
+def _dados_do_resultado_busca(
+    candidato,
+    isbn,
+):
+    if not isinstance(
+        candidato,
+        dict,
+    ):
+        return None
+
+    href = str(
+        candidato.get(
+            "href"
+        )
+        or ""
+    ).strip()
+
+    titulo_busca = (
+        candidato.get(
+            "title"
+        )
+        or ""
+    )
+
+    corpo_busca = (
+        candidato.get(
+            "body"
+        )
+        or ""
+    )
+
+    evidencia = (
+        f"{href} "
+        f"{titulo_busca} "
+        f"{corpo_busca}"
+    )
+
+    if normalizar_isbn(
+        isbn
+    ) not in re.sub(
+        r"[^0-9Xx]",
+        "",
+        evidencia,
+    ).upper():
+        return None
+
+    titulo = (
+        _limpar_titulo_resultado_busca(
+            titulo_busca
+        )
+    )
+
+    autores = (
+        _extrair_autor_resultado_busca(
+            titulo_busca,
+            corpo_busca,
+        )
+    )
+
+    if not titulo:
+        return None
+
+    return {
+        "sucesso": True,
+        "origem": "Pesquisa Web",
+        "titulo": titulo,
+        "isbn": normalizar_isbn(
+            isbn
+        ),
+        "autores": autores,
+        "editora": None,
+        "data_publicacao": None,
+        "generos": [],
+        "url_origem": href,
+    }
+
+
+def _mesclar_pagina_com_busca(
+    dados_pagina,
+    dados_busca,
+):
+    if not dados_pagina:
+        return dados_busca
+
+    if not dados_busca:
+        return dados_pagina
+
+    pagina = dict(
+        dados_pagina
+    )
+
+    titulo_pagina = (
+        pagina.get(
+            "titulo"
+        )
+    )
+
+    titulo_busca = (
+        dados_busca.get(
+            "titulo"
+        )
+    )
+
+    if titulo_busca:
+        chave_pagina = (
+            _titulo_para_comparacao(
+                titulo_pagina
+            )
+            if titulo_pagina
+            else ""
+        )
+
+        chave_busca = (
+            _titulo_para_comparacao(
+                titulo_busca
+            )
+        )
+
+        # Corrige títulos truncados como "O Diário" quando o
+        # resultado de pesquisa traz "O Diário de um Banana 1".
+        if (
+            not titulo_pagina
+            or (
+                chave_pagina
+                and chave_busca.startswith(
+                    chave_pagina + " "
+                )
+                and len(
+                    chave_busca.split()
+                )
+                >= len(
+                    chave_pagina.split()
+                )
+                + 2
+            )
+        ):
+            pagina[
+                "titulo"
+            ] = titulo_busca
+
+    autores_pagina = (
+        _limpar_autores_validos(
+            pagina.get(
+                "autores"
+            )
+            or []
+        )
+    )
+
+    autores_busca = (
+        _limpar_autores_validos(
+            dados_busca.get(
+                "autores"
+            )
+            or []
+        )
+    )
+
+    if (
+        not autores_pagina
+        and autores_busca
+    ):
+        pagina[
+            "autores"
+        ] = autores_busca
+    else:
+        pagina[
+            "autores"
+        ] = autores_pagina
+
+    return (
+        _sanitizar_resultado_web(
+            pagina
+        )
+    )
+
+
 # Leitura e pesquisa web
 
 
-def _ler_candidato_web(url, isbn):
+def _ler_candidato_web(
+    candidato,
+    isbn,
+):
     isbn_limpo = normalizar_isbn(
         isbn
+    )
+
+    if isinstance(
+        candidato,
+        dict,
+    ):
+        url = str(
+            candidato.get(
+                "href"
+            )
+            or ""
+        ).strip()
+    else:
+        url = str(
+            candidato
+            or ""
+        ).strip()
+
+        candidato = {
+            "href": url,
+            "title": "",
+            "body": "",
+        }
+
+    if not url:
+        return None
+
+    dados_busca = (
+        _dados_do_resultado_busca(
+            candidato,
+            isbn_limpo,
+        )
     )
 
     print(
         f"[BookCatalog] A testar página: {url}"
     )
 
-    # 1) Tenta ler o HTML diretamente.
     try:
         html, url_final = _obter_html(
             url,
@@ -1803,10 +3480,18 @@ def _ler_candidato_web(url, isbn):
             )
 
             if dados:
+                dados = (
+                    _mesclar_pagina_com_busca(
+                        dados,
+                        dados_busca,
+                    )
+                )
+
                 print(
                     "[BookCatalog] Ficha válida encontrada "
                     f"por HTML: {url_final}"
                 )
+
                 return dados
 
     except Exception as erro:
@@ -1815,8 +3500,6 @@ def _ler_candidato_web(url, isbn):
             erro,
         )
 
-    # 2) Usa o extrator do DDGS. Isto costuma funcionar em páginas
-    # onde a leitura HTTP direta é bloqueada ou demasiado dinâmica.
     try:
         extraido = DDGS(
             timeout=12
@@ -1852,10 +3535,18 @@ def _ler_candidato_web(url, isbn):
             )
 
             if dados:
+                dados = (
+                    _mesclar_pagina_com_busca(
+                        dados,
+                        dados_busca,
+                    )
+                )
+
                 print(
                     "[BookCatalog] Ficha válida encontrada "
                     f"pelo DDGS Extract: {url}"
                 )
+
                 return dados
 
     except Exception as erro:
@@ -1864,7 +3555,6 @@ def _ler_candidato_web(url, isbn):
             erro,
         )
 
-    # 3) Último fallback: Jina Reader.
     try:
         markdown = _obter_texto_reader(
             url
@@ -1884,10 +3574,18 @@ def _ler_candidato_web(url, isbn):
             )
 
             if dados:
+                dados = (
+                    _mesclar_pagina_com_busca(
+                        dados,
+                        dados_busca,
+                    )
+                )
+
                 print(
                     "[BookCatalog] Ficha válida encontrada "
                     f"pelo Reader: {url}"
                 )
+
                 return dados
 
     except Exception as erro:
@@ -1895,6 +3593,16 @@ def _ler_candidato_web(url, isbn):
             "[BookCatalog] Reader falhou:",
             erro,
         )
+
+    # O snippet do motor de pesquisa é usado apenas se pelo menos
+    # o título for válido e o ISBN aparece explicitamente no resultado.
+    if (
+        dados_busca
+        and _resultado_web_valido(
+            dados_busca
+        )
+    ):
+        return dados_busca
 
     return None
 
@@ -1919,16 +3627,16 @@ def procurar_livro_pesquisa_web(isbn):
         isbn
     )
 
-    links = _descobrir_links_produto(
+    candidatos = _descobrir_links_produto(
         isbn_limpo
     )
 
     print(
         f"[BookCatalog] Pesquisa Web geral encontrou "
-        f"{len(links)} link(s) candidato(s)."
+        f"{len(candidatos)} resultado(s) candidato(s)."
     )
 
-    if not links:
+    if not candidatos:
         return {
             "sucesso": False,
             "erro": (
@@ -1937,9 +3645,7 @@ def procurar_livro_pesquisa_web(isbn):
             ),
         }
 
-    # Lê vários resultados em paralelo. Uma página só é aceite
-    # se o conteúdo contiver exatamente o ISBN pesquisado.
-    candidatos = links[:12]
+    candidatos = candidatos[:14]
     resultados = []
 
     with ThreadPoolExecutor(
@@ -1951,26 +3657,22 @@ def procurar_livro_pesquisa_web(isbn):
         futuros = {
             executor.submit(
                 _ler_candidato_web,
-                link,
+                candidato,
                 isbn_limpo,
-            ): link
-            for link in candidatos
+            ): candidato
+            for candidato
+            in candidatos
         }
 
         for futuro in as_completed(
             futuros
         ):
-            link = futuros[
-                futuro
-            ]
-
             try:
                 dados = futuro.result()
             except Exception as erro:
                 print(
-                    f"[BookCatalog] "
-                    f"Erro ao ler {link}: "
-                    f"{erro}"
+                    "[BookCatalog] Erro ao ler candidato:",
+                    erro,
                 )
                 dados = None
 
@@ -1979,135 +3681,32 @@ def procurar_livro_pesquisa_web(isbn):
                     dados
                 )
 
-    if not resultados:
+    consolidado = (
+        _consolidar_resultados_web(
+            resultados,
+            isbn_limpo,
+        )
+    )
+
+    if not consolidado:
         return {
             "sucesso": False,
             "erro": (
                 "As páginas encontradas não continham "
-                "uma ficha bibliográfica válida com o ISBN exato."
+                "metadados bibliográficos suficientemente fiáveis."
             ),
         }
 
-    resultados.sort(
-        key=_pontuar_metadados,
-        reverse=True,
-    )
-
-    melhor = resultados[0]
-
-    # Se houver várias páginas válidas, completa campos em falta
-    # usando as restantes, sem misturar dados quando já existem.
-    autores = list(
-        melhor.get(
-            "autores"
-        )
-        or []
-    )
-    generos = list(
-        melhor.get(
-            "generos"
-        )
-        or []
-    )
-
-    autores_normalizados = {
-        _normalizar_texto(
-            autor
-        )
-        for autor in autores
-    }
-
-    generos_normalizados = {
-        _normalizar_texto(
-            genero
-        )
-        for genero in generos
-    }
-
-    for resultado in resultados[1:]:
-        if not melhor.get(
-            "editora"
-        ):
-            melhor[
-                "editora"
-            ] = resultado.get(
-                "editora"
-            )
-
-        if not melhor.get(
-            "data_publicacao"
-        ):
-            melhor[
-                "data_publicacao"
-            ] = resultado.get(
-                "data_publicacao"
-            )
-
-        for autor in (
-            resultado.get(
-                "autores"
-            )
-            or []
-        ):
-            chave = (
-                _normalizar_texto(
-                    autor
-                )
-            )
-
-            if (
-                chave
-                and chave
-                not in autores_normalizados
-            ):
-                autores.append(
-                    autor
-                )
-                autores_normalizados.add(
-                    chave
-                )
-
-        for genero in (
-            resultado.get(
-                "generos"
-            )
-            or []
-        ):
-            chave = (
-                _normalizar_texto(
-                    genero
-                )
-            )
-
-            if (
-                chave
-                and chave
-                not in generos_normalizados
-            ):
-                generos.append(
-                    genero
-                )
-                generos_normalizados.add(
-                    chave
-                )
-
-    melhor[
-        "autores"
-    ] = autores
-
-    melhor[
-        "generos"
-    ] = generos
-
     print(
-        "[BookCatalog] Melhor ficha Web geral: "
-        f"{melhor.get('url_origem')} | "
-        f"título={melhor.get('titulo')!r} | "
-        f"autor={melhor.get('autores')!r} | "
-        f"pontuação={_pontuar_metadados(melhor)}"
+        "[BookCatalog] Resultado Web consolidado: "
+        f"título={consolidado.get('titulo')!r} | "
+        f"autor={consolidado.get('autores')!r} | "
+        f"editora={consolidado.get('editora')!r} | "
+        f"data={consolidado.get('data_publicacao')!r} | "
+        f"géneros={consolidado.get('generos')!r}"
     )
 
-    return melhor
+    return consolidado
 
 
 # Fluxo final usado pelo SABIN
@@ -2126,9 +3725,11 @@ def _normalizar_lista_metadados(valor):
     vistos = set()
 
     for item in valores:
-        texto_item = str(
-            item or ""
-        ).strip()
+        texto_item = (
+            _limpar_texto_exibicao(
+                item
+            )
+        )
 
         if not texto_item:
             continue
@@ -2140,7 +3741,10 @@ def _normalizar_lista_metadados(valor):
         if chave in vistos:
             continue
 
-        vistos.add(chave)
+        vistos.add(
+            chave
+        )
+
         resultado.append(
             texto_item
         )
@@ -2152,25 +3756,179 @@ def _mesclar_resultados_livro(
     resultados,
     isbn_limpo,
 ):
-    validos = [
-        resultado
-        for resultado in resultados
-        if (
+    validos = []
+
+    for resultado in resultados:
+        if not (
             resultado
             and resultado.get(
                 "sucesso"
             )
+        ):
+            continue
+
+        if (
+            resultado.get(
+                "origem"
+            )
+            == "Pesquisa Web"
+        ):
+            resultado = (
+                _sanitizar_resultado_web(
+                    resultado
+                )
+            )
+
+        validos.append(
+            resultado
         )
-    ]
 
     if not validos:
         return None
 
-    titulo = None
-    editora = None
-    data_publicacao = None
-    autores = []
+    # Se existir resultado de API, começa por ele:
+    # é estruturado e por isso tem prioridade.
+    api = next(
+        (
+            resultado
+            for resultado
+            in validos
+            if "API" in str(
+                resultado.get(
+                    "origem"
+                )
+                or ""
+            )
+        ),
+        None,
+    )
+
+    web = next(
+        (
+            resultado
+            for resultado
+            in validos
+            if resultado.get(
+                "origem"
+            )
+            == "Pesquisa Web"
+        ),
+        None,
+    )
+
+    base = dict(
+        api
+        or web
+        or validos[0]
+    )
+
+    if web:
+        if not base.get(
+            "titulo"
+        ):
+            base["titulo"] = (
+                web.get(
+                    "titulo"
+                )
+            )
+
+        if not base.get(
+            "autores"
+        ):
+            base["autores"] = (
+                web.get(
+                    "autores"
+                )
+            )
+
+        if not base.get(
+            "editora"
+        ):
+            base["editora"] = (
+                web.get(
+                    "editora"
+                )
+            )
+
+        if not base.get(
+            "data_publicacao"
+        ):
+            base[
+                "data_publicacao"
+            ] = web.get(
+                "data_publicacao"
+            )
+
+        if not base.get(
+            "generos"
+        ):
+            base["generos"] = (
+                web.get(
+                    "generos"
+                )
+            )
+
+    titulo = (
+        _limpar_titulo_livro(
+            base.get(
+                "titulo"
+            )
+        )
+    )
+
+    autores = (
+        _limpar_autores_validos(
+            base.get(
+                "autores"
+            )
+            or []
+        )
+    )
+
+    editora = (
+        _limpar_editora(
+            base.get(
+                "editora"
+            )
+        )
+    )
+
+    data_publicacao = (
+        _normalizar_data_catalogo(
+            base.get(
+                "data_publicacao"
+            )
+        )
+        if base.get(
+            "data_publicacao"
+        )
+        else None
+    )
+
     generos = []
+
+    for genero in (
+        base.get(
+            "generos"
+        )
+        or []
+    ):
+        for nome in (
+            _generos_da_classificacao(
+                genero
+            )
+            or []
+        ):
+            if nome not in generos:
+                generos.append(
+                    nome
+                )
+
+    if _titulo_invalido(
+        titulo
+    ):
+        return None
+
     origens = []
 
     for resultado in validos:
@@ -2180,111 +3938,19 @@ def _mesclar_resultados_livro(
 
         if (
             origem
-            and origem not in origens
+            and origem
+            not in origens
         ):
             origens.append(
                 origem
             )
 
-        titulo_resultado = (
-            resultado.get(
-                "titulo"
-            )
-        )
-
-        if (
-            not titulo
-            and not _titulo_invalido(
-                titulo_resultado
-            )
-        ):
-            titulo = str(
-                titulo_resultado
-            ).strip()
-
-        if not editora:
-            valor_editora = (
-                resultado.get(
-                    "editora"
-                )
-            )
-
-            if valor_editora:
-                editora = str(
-                    valor_editora
-                ).strip()
-
-        if not data_publicacao:
-            valor_data = (
-                resultado.get(
-                    "data_publicacao"
-                )
-            )
-
-            if valor_data:
-                data_publicacao = str(
-                    valor_data
-                ).strip()
-
-        autores_existentes = {
-            _normalizar_texto(
-                autor
-            )
-            for autor in autores
-        }
-
-        for autor in (
-            _normalizar_lista_metadados(
-                resultado.get(
-                    "autores"
-                )
-            )
-        ):
-            chave = _normalizar_texto(
-                autor
-            )
-
-            if chave not in autores_existentes:
-                autores.append(
-                    autor
-                )
-                autores_existentes.add(
-                    chave
-                )
-
-        generos_existentes = {
-            _normalizar_texto(
-                genero
-            )
-            for genero in generos
-        }
-
-        for genero in (
-            _normalizar_lista_metadados(
-                resultado.get(
-                    "generos"
-                )
-            )
-        ):
-            chave = _normalizar_texto(
-                genero
-            )
-
-            if chave not in generos_existentes:
-                generos.append(
-                    genero
-                )
-                generos_existentes.add(
-                    chave
-                )
-
-    if _titulo_invalido(titulo):
-        return None
-
     return {
         "sucesso": True,
         "origem": (
-            " + ".join(origens)
+            " + ".join(
+                origens
+            )
             if origens
             else "Fonte externa"
         ),
@@ -2295,7 +3961,7 @@ def _mesclar_resultados_livro(
         "data_publicacao": (
             data_publicacao
         ),
-        "generos": generos,
+        "generos": generos[:3],
     }
 
 

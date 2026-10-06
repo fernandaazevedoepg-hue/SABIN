@@ -1,6 +1,5 @@
 #export-excel-button,
 #export-pdf-button,
-#export-update-button,
 #export-powerbi-button {
     width: 100%;
     min-height: 46px;
@@ -8,22 +7,22 @@
     font-weight: 700;
     font-size: 14px;
     cursor: pointer;
-    margin: 0 0 10px 0;
+    margin: 0;
     transition:
         transform 0.12s ease,
         box-shadow 0.12s ease,
-        background 0.12s ease;
+        background 0.12s ease,
+        border-color 0.12s ease;
 }
 
 #export-excel-button,
-#export-update-button {
+#export-powerbi-button {
     background: #2f6fed;
     color: #ffffff;
     border: 1px solid #2f6fed;
 }
 
-#export-pdf-button,
-#export-powerbi-button {
+#export-pdf-button {
     background: #ffffff;
     color: #1f3a5f;
     border: 1px solid #b9c7da;
@@ -31,25 +30,35 @@
 
 #export-excel-button:hover,
 #export-pdf-button:hover,
-#export-update-button:hover,
 #export-powerbi-button:hover {
     transform: translateY(-1px);
     box-shadow: 0 6px 16px rgba(31, 58, 95, 0.12);
 }
 
+#export-excel-button:hover,
+#export-powerbi-button:hover {
+    background: #285fd0;
+    border-color: #285fd0;
+}
+
+#export-pdf-button:hover {
+    border-color: #8fa5c2;
+    background: #f8fbff;
+}
+
 .sale-layout:has(#export-excel-button) {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 20px;
+    grid-template-columns: minmax(0, 1.45fr) minmax(340px, 0.8fr);
+    gap: 18px;
     align-items: stretch;
     max-width: 1180px;
 }
 
 .sale-form-panel:has(#export-excel-button),
-.sale-form-panel:has(#export-update-button) {
+.sale-form-panel:has(#export-powerbi-button) {
     display: flex;
     flex-direction: column;
-    min-height: 285px;
+    min-height: 260px;
     padding: 24px;
     border: 1px solid #d8e0ea;
     border-radius: 12px;
@@ -58,30 +67,54 @@
 }
 
 .sale-form-panel:has(#export-excel-button) h3,
-.sale-form-panel:has(#export-update-button) h3 {
-    margin-top: 0;
-    margin-bottom: 8px;
+.sale-form-panel:has(#export-powerbi-button) h3 {
+    margin: 0 0 8px 0;
     color: #172033;
 }
 
-.sale-form-panel:has(#export-excel-button) .form-help,
-.sale-form-panel:has(#export-update-button) .form-help {
+.sale-form-panel:has(#export-excel-button) > .form-help:first-of-type,
+.sale-form-panel:has(#export-powerbi-button) > .form-help:first-of-type {
+    margin: 0 0 18px 0;
     color: #607089;
     line-height: 1.45;
-    margin-top: 0;
-    margin-bottom: 16px;
+}
+
+.sale-form-panel:has(#export-excel-button) #export-excel-button {
+    margin-bottom: 8px;
+}
+
+.sale-form-panel:has(#export-excel-button) #export-pdf-button {
+    margin-top: 2px;
+    margin-bottom: 8px;
 }
 
 #export-excel-button + .form-help,
 #export-pdf-button + .form-help {
     font-size: 12px;
-    margin-top: -2px;
-    margin-bottom: 18px;
+    line-height: 1.45;
+    color: #607089;
+    margin: 0 0 16px 0;
+}
+
+#export-pdf-button + .form-help {
+    margin-bottom: 0;
+}
+
+.sale-form-panel:has(#export-powerbi-button) {
+    justify-content: flex-start;
+}
+
+.sale-form-panel:has(#export-powerbi-button) #export-powerbi-button {
+    margin-top: 0;
 }
 
 #export-message {
     max-width: 1180px;
     margin-top: 14px;
+}
+
+#export-message:empty {
+    display: none;
 }
 
 #export-message .sale-success-message,
@@ -100,7 +133,7 @@
     }
 
     .sale-form-panel:has(#export-excel-button),
-    .sale-form-panel:has(#export-update-button) {
+    .sale-form-panel:has(#export-powerbi-button) {
         min-height: auto;
     }
 }
