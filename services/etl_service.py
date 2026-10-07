@@ -55,6 +55,24 @@ def executar_comando(
     }
 
 
+def atualizar_alertas_stock_rapido():
+    from analysis.stock_alerts import (
+        gerar_alertas_stock,
+        guardar_alertas_stock,
+    )
+
+    dados, _, _ = gerar_alertas_stock()
+
+    guardar_alertas_stock(
+        dados
+    )
+
+    return {
+        "sucesso": True,
+        "livros": len(dados),
+    }
+
+
 def executar_atualizacao_analitica():
     resultados = []
 
@@ -92,22 +110,11 @@ def executar_atualizacao_analitica():
         )
     )
 
-    resultados.append(
-        executar_comando(
-            [
-                sys.executable,
-                "-m",
-                "analysis.stock_alerts",
-            ],
-            "Alertas de stock",
-        )
-    )
-
     return {
         "sucesso": True,
         "mensagem": (
             "Data Warehouse, previsões e alertas "
-            "atualizados com sucesso."
+            "preditivos atualizados com sucesso."
         ),
         "resultados": resultados,
     }
@@ -148,6 +155,14 @@ def solicitar_atualizacao_analitica():
     global _atualizacao_em_execucao
     global _atualizacao_pendente
 
+    try:
+        atualizar_alertas_stock_rapido()
+    except Exception as erro:
+        print(
+            "Erro na atualização rápida dos alertas de stock:",
+            erro,
+        )
+
     with _estado_lock:
         if _atualizacao_em_execucao:
             _atualizacao_pendente = True
@@ -184,6 +199,21 @@ def main():
     print()
     print("SABIN - ATUALIZAÇÃO ANALÍTICA")
     print()
+
+    try:
+        resultado_stock = (
+            atualizar_alertas_stock_rapido()
+        )
+
+        print(
+            "[OK] Alertas de stock "
+            f"({resultado_stock['livros']} livros)"
+        )
+    except Exception as erro:
+        print(
+            "[ERRO] Alertas de stock:",
+            erro,
+        )
 
     resultado = executar_atualizacao_analitica()
 

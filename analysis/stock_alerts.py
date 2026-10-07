@@ -69,21 +69,20 @@ def carregar_vendas_periodo(
 ):
     query = text("""
         SELECT
-            l.livro_id_origem AS livro_id,
+            iv.livro_id,
             COALESCE(
-                SUM(f.quantidade),
+                SUM(iv.quantidade),
                 0
             ) AS unidades_vendidas
-        FROM dw.fact_vendas f
-        JOIN dw.dim_livro l
-            ON l.livro_key = f.livro_key
-        JOIN dw.dim_data d
-            ON d.data_key = f.data_key
+        FROM public.vendas v
+        JOIN public.itens_venda iv
+            ON iv.venda_id = v.id
         WHERE
-            d.data >= :data_inicio
-            AND d.data <= :data_fim
+            v.status = 'Concluída'
+            AND v.data_venda::date >= :data_inicio
+            AND v.data_venda::date <= :data_fim
         GROUP BY
-            l.livro_id_origem;
+            iv.livro_id;
     """)
 
     with engine.connect() as connection:
