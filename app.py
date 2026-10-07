@@ -3344,63 +3344,88 @@ def pagina_stock():
 
 def pagina_exportacoes():
     return html.Div(
+        className="export-page",
         children=[
             html.Div(
                 className="page-header",
                 children=[
                     html.H2("Exportações"),
                     html.P(
-                        "Exportação de dados e acesso ao projeto Power BI do SABIN"
+                        "Exporta dados do SABIN ou abre o projeto de análise no Power BI."
                     ),
                 ],
             ),
-            dcc.Download(id="download-excel"),
-            dcc.Download(id="download-pdf"),
+            dcc.Download(
+                id="download-excel"
+            ),
+            dcc.Download(
+                id="download-pdf"
+            ),
             html.Div(
-                className="sale-layout",
+                className="export-actions-grid",
                 children=[
                     html.Div(
-                        className="sale-form-panel",
+                        className="export-action-card",
                         children=[
-                            html.H3("Exportar Dados"),
-                            html.P(
-                                "Gera ficheiros com os principais dados e indicadores atuais do sistema.",
-                                className="form-help",
+                            html.Div(
+                                className="export-action-content",
+                                children=[
+                                    html.H3(
+                                        "Excel"
+                                    ),
+                                    html.P(
+                                        "Exporta os principais dados do sistema para um ficheiro Excel com folhas de resumo, vendas, livros, clientes, stock e previsões."
+                                    ),
+                                ],
                             ),
                             html.Button(
                                 "Exportar Excel",
                                 id="export-excel-button",
-                                className="primary-button sale-submit-button",
+                                className="export-action-button",
                                 n_clicks=0,
-                            ),
-                            html.P(
-                                "O ficheiro Excel inclui as folhas Resumo, Vendas, Livros, Clientes, Stock e Previsões.",
-                                className="form-help",
-                            ),
-                            html.Button(
-                                "Gerar Relatório PDF",
-                                id="export-pdf-button",
-                                className="secondary-button",
-                                n_clicks=0,
-                            ),
-                            html.P(
-                                "O PDF apresenta um resumo de gestão com indicadores, stock, vendas e previsão.",
-                                className="form-help",
                             ),
                         ],
                     ),
                     html.Div(
-                        className="sale-form-panel",
+                        className="export-action-card",
                         children=[
-                            html.H3("Power BI"),
-                            html.P(
-                                "Abre o projeto do SABIN no Power BI Desktop.",
-                                className="form-help",
+                            html.Div(
+                                className="export-action-content",
+                                children=[
+                                    html.H3(
+                                        "Relatório PDF"
+                                    ),
+                                    html.P(
+                                        "Gera um relatório de gestão com os principais indicadores, vendas, stock, reposição e previsão."
+                                    ),
+                                ],
+                            ),
+                            html.Button(
+                                "Gerar Relatório PDF",
+                                id="export-pdf-button",
+                                className="export-action-button",
+                                n_clicks=0,
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        className="export-action-card",
+                        children=[
+                            html.Div(
+                                className="export-action-content",
+                                children=[
+                                    html.H3(
+                                        "Power BI"
+                                    ),
+                                    html.P(
+                                        "Abre o ficheiro do projeto SABIN no Power BI Desktop para consultar os dashboards analíticos."
+                                    ),
+                                ],
                             ),
                             html.Button(
                                 "Abrir Power BI",
                                 id="export-powerbi-button",
-                                className="primary-button sale-submit-button",
+                                className="export-action-button",
                                 n_clicks=0,
                             ),
                         ],
@@ -3409,8 +3434,9 @@ def pagina_exportacoes():
             ),
             html.Div(
                 id="export-message",
+                className="export-message",
             ),
-        ]
+        ],
     )
 
 

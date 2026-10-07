@@ -1615,12 +1615,24 @@ def _parece_nome_autor(
         " livro ",
         " ebook ",
         " edition",
+        " editions ",
         " edicao",
         " volume ",
         " vol ",
         " preco ",
         " price ",
         " stock ",
+        " using ",
+        " storygraph",
+        " the storygraph",
+        " goodreads",
+        " website",
+        " web site",
+        " reviews ",
+        " ratings ",
+        " browse ",
+        " sign in",
+        " login",
     )
 
     if any(
@@ -1739,6 +1751,20 @@ def _limpar_autores_validos(
         if chave in vistos:
             continue
 
+        if (
+            nome.isupper()
+            and len(nome) > 3
+        ):
+            nome = " ".join(
+                parte.capitalize()
+                if not (
+                    len(parte) <= 3
+                    and "." in parte
+                )
+                else parte
+                for parte in nome.split()
+            )
+
         vistos.add(
             chave
         )
@@ -1749,11 +1775,157 @@ def _limpar_autores_validos(
     return resultado
 
 
-def _limpar_editora(
+def _formatar_nome_editora(
     valor,
 ):
     editora = (
         _limpar_texto_exibicao(
+            valor
+        )
+    )
+
+    if not editora:
+        return None
+
+    # Remove URLs/domínios caso algum resultado da pesquisa
+    # tenha devolvido a editora nesse formato.
+    editora = re.sub(
+        r"^https?://",
+        "",
+        editora,
+        flags=re.I,
+    )
+
+    editora = re.sub(
+        r"^www\.",
+        "",
+        editora,
+        flags=re.I,
+    )
+
+    editora = re.sub(
+        r"\.(?:pt|com|br|org|net)(?:/.*)?$",
+        "",
+        editora,
+        flags=re.I,
+    )
+
+    # Remove separadores estranhos vindos de snippets/HTML.
+    editora = re.sub(
+        r"[_/]+",
+        " ",
+        editora,
+    )
+
+    editora = re.sub(
+        r"\s+",
+        " ",
+        editora,
+    ).strip()
+
+    chave_compacta = re.sub(
+        r"[^a-z0-9]",
+        "",
+        _sem_acentos(
+            editora
+        ).lower(),
+    )
+
+    # Algumas páginas devolvem o nome da editora todo junto.
+    # Mantemos aqui apenas normalizações de marcas editoriais,
+    # sem depender de um site específico.
+    nomes_conhecidos = {
+        "casadasletras": "Casa das Letras",
+        "companhiadasletras": "Companhia das Letras",
+        "editorapresenca": "Editorial Presença",
+        "editorialpresenca": "Editorial Presença",
+        "presenca": "Presença",
+        "astralcultural": "Astral Cultural",
+        "altoastral": "Alto Astral",
+        "editoraltoastral": "Alto Astral",
+        "booksmile": "Booksmile",
+        "portoeditora": "Porto Editora",
+        "penguinrandomhouse": "Penguin Random House",
+        "harpercollins": "HarperCollins",
+        "planeta": "Planeta",
+        "editoraplaneta": "Planeta",
+        "intrinseca": "Intrínseca",
+        "rocco": "Rocco",
+        "record": "Record",
+        "leya": "Leya",
+    }
+
+    if chave_compacta in nomes_conhecidos:
+        return nomes_conhecidos[
+            chave_compacta
+        ]
+
+    # Para nomes que já vêm separados, normaliza a capitalização
+    # sem estragar conectores portugueses.
+    if " " in editora:
+        conectores = {
+            "a",
+            "as",
+            "da",
+            "das",
+            "de",
+            "do",
+            "dos",
+            "e",
+        }
+
+        palavras = []
+
+        for indice, palavra in enumerate(
+            editora.split()
+        ):
+            palavra_limpa = palavra.strip()
+
+            if not palavra_limpa:
+                continue
+
+            # Preserva siglas como "Leya", "FNAC", etc.
+            if (
+                palavra_limpa.isupper()
+                and len(
+                    palavra_limpa
+                ) <= 5
+            ):
+                palavras.append(
+                    palavra_limpa
+                )
+                continue
+
+            palavra_lower = (
+                palavra_limpa.lower()
+            )
+
+            if (
+                indice > 0
+                and palavra_lower
+                in conectores
+            ):
+                palavras.append(
+                    palavra_lower
+                )
+            else:
+                palavras.append(
+                    palavra_lower[:1].upper()
+                    + palavra_lower[1:]
+                )
+
+        editora = " ".join(
+            palavras
+        )
+
+    return editora
+
+
+def _limpar_editora(
+    valor,
+):
+    editora = (
+        _formatar_nome_editora(
             valor
         )
     )
@@ -1779,6 +1951,13 @@ def _limpar_editora(
         " [](){}.,;|-"
     )
 
+    # Volta a formatar depois de remover prefixos/ano.
+    editora = (
+        _formatar_nome_editora(
+            editora
+        )
+    )
+
     if not editora:
         return None
 
@@ -1800,6 +1979,115 @@ def _limpar_editora(
     return editora
 
 
+def _marca_do_dominio(
+    url,
+):
+    try:
+        dominio = urlparse(
+            str(url or "")
+        ).netloc.lower()
+
+        dominio = dominio.split(
+            ":"
+        )[0]
+
+        if dominio.startswith(
+            "www."
+        ):
+            dominio = dominio[
+                4:
+            ]
+
+        if not dominio:
+            return None
+
+        partes = [
+            parte
+            for parte in dominio.split(
+                "."
+            )
+            if parte
+        ]
+
+        if len(partes) < 2:
+            return None
+
+        return partes[-2]
+
+    except Exception:
+        return None
+
+
+def _remover_sufixo_site_titulo(
+    titulo,
+    url_origem,
+):
+    titulo = _limpar_texto_exibicao(
+        titulo
+    )
+
+    marca = _marca_do_dominio(
+        url_origem
+    )
+
+    if (
+        not titulo
+        or not marca
+    ):
+        return titulo
+
+    partes = re.split(
+        r"\s+(?:[-|–—])\s+",
+        titulo,
+    )
+
+    if len(partes) <= 1:
+        return titulo
+
+    ultimo = (
+        partes[-1]
+        .strip()
+    )
+
+    ultimo_compacto = re.sub(
+        r"[^a-z0-9]",
+        "",
+        _sem_acentos(
+            ultimo
+        ).lower(),
+    )
+
+    marca_compacta = re.sub(
+        r"[^a-z0-9]",
+        "",
+        _sem_acentos(
+            marca
+        ).lower(),
+    )
+
+    if (
+        ultimo_compacto
+        and marca_compacta
+        and (
+            ultimo_compacto
+            == marca_compacta
+            or ultimo_compacto.endswith(
+                marca_compacta
+            )
+            or marca_compacta.endswith(
+                ultimo_compacto
+            )
+        )
+    ):
+        titulo = " - ".join(
+            partes[:-1]
+        )
+
+    return titulo.strip(
+        " .|:-–—"
+    )
+
+
 def _limpar_titulo_livro(
     valor,
 ):
@@ -1812,6 +2100,32 @@ def _limpar_titulo_livro(
     if not titulo:
         return None
 
+    normalizado_inicial = (
+        _normalizar_texto(
+            titulo
+        )
+    )
+
+    prefixos_invalidos = (
+        "editions for ",
+        "editions of ",
+        "edition for ",
+        "edition of ",
+        "reviews for ",
+        "reviews of ",
+        "ratings for ",
+        "books similar to ",
+        "books like ",
+    )
+
+    if any(
+        normalizado_inicial.startswith(
+            prefixo
+        )
+        for prefixo in prefixos_invalidos
+    ):
+        return None
+
     titulo = re.sub(
         r"\s*\((?:Portuguese|English|Spanish|French)\s+Edition\)\s*$",
         "",
@@ -1819,16 +2133,88 @@ def _limpar_titulo_livro(
         flags=re.I,
     )
 
+    # Remove nomes de sites que algumas pesquisas colam ao título.
+    # Exemplos:
+    # "O Livro do Ric : Amazon.co.uk: Books"
+    # "Título - WOOK"
+    # "Título | Bertrand"
     titulo = re.sub(
-        r"\s*[-|]\s*(?:WOOK|Bertrand|FNAC|Amazon|Google Books).*$",
+        r"\s*(?:[:|–—-])\s*"
+        r"(?:www\.)?"
+        r"(?:amazon(?:\.[a-z.]+)?|wook|bertrand|fnac|google books|"
+        r"the storygraph|storygraph|goodreads|bookroo)"
+        r"(?:\s*[:|-]\s*books?)?"
+        r".*$",
         "",
         titulo,
         flags=re.I,
     )
 
-    titulo = titulo.strip(
-        " .|:-"
+    encontrado_parenteses = re.search(
+        r"\s*\(([^()]*)\)\s*$",
+        titulo,
     )
+
+    if encontrado_parenteses:
+        conteudo = (
+            encontrado_parenteses
+            .group(1)
+            .strip()
+        )
+
+        titulo_base = titulo[
+            :encontrado_parenteses.start()
+        ].strip()
+
+        palavras_base = {
+            palavra
+            for palavra in _normalizar_texto(
+                titulo_base
+            ).split()
+            if palavra
+        }
+
+        palavras_parenteses = {
+            palavra
+            for palavra in _normalizar_texto(
+                conteudo
+            ).split()
+            if palavra
+        }
+
+        if (
+            palavras_parenteses
+            and palavras_parenteses.issubset(
+                palavras_base
+            )
+        ):
+            titulo = titulo_base
+
+    titulo = titulo.strip(
+        " .|:-–—"
+    )
+
+    normalizado_final = (
+        _normalizar_texto(
+            titulo
+        )
+    )
+
+    termos_invalidos = (
+        "the storygraph",
+        "storygraph",
+        "goodreads",
+        "editions for",
+        "editions of",
+        "amazon.co.uk",
+        "amazon.com",
+    )
+
+    if any(
+        termo in normalizado_final
+        for termo in termos_invalidos
+    ):
+        return None
 
     if _titulo_invalido(
         titulo
@@ -1851,11 +2237,20 @@ def _sanitizar_resultado_web(
         dados
     )
 
-    resultado["titulo"] = (
-        _limpar_titulo_livro(
+    titulo_limpo = (
+        _remover_sufixo_site_titulo(
             resultado.get(
                 "titulo"
-            )
+            ),
+            resultado.get(
+                "url_origem"
+            ),
+        )
+    )
+
+    resultado["titulo"] = (
+        _limpar_titulo_livro(
+            titulo_limpo
         )
     )
 
@@ -2994,13 +3389,23 @@ def _pesquisar_web_ddgs(isbn):
 
     consultas = [
         f'"{isbn_limpo}"',
+        f'"{isbn_limpo}" Autor',
+        f'"{isbn_limpo}" Editora',
+        f'"{isbn_limpo}" Editor',
+        f'"{isbn_limpo}" "Data de Lançamento"',
+        f'"{isbn_limpo}" "Data de publicação"',
+        f'"{isbn_limpo}" Published',
+        f'"{isbn_limpo}" "Classificação Temática"',
+        f'"{isbn_limpo}" género',
+        f'"{isbn_limpo}" categoria',
+        f'"{isbn_limpo}" fantasia',
+        f'"{isbn_limpo}" juvenil',
         f'"{isbn_limpo}" livro',
         f'"{isbn_limpo}" ISBN',
         f'"{isbn_limpo}" book',
     ]
 
-    candidatos = []
-    vistos = set()
+    candidatos_por_href = {}
 
     try:
         pesquisador = DDGS(
@@ -3046,39 +3451,507 @@ def _pesquisar_web_ddgs(isbn):
                 or ""
             ).strip()
 
-            if href in vistos:
+            titulo = (
+                _limpar_texto_exibicao(
+                    resultado.get(
+                        "title"
+                    )
+                    or ""
+                )
+            )
+
+            corpo = (
+                _limpar_texto_exibicao(
+                    resultado.get(
+                        "body"
+                    )
+                    or ""
+                )
+            )
+
+            if href not in candidatos_por_href:
+                candidatos_por_href[
+                    href
+                ] = {
+                    "href": href,
+                    "title": titulo,
+                    "body": corpo,
+                }
                 continue
 
-            vistos.add(
+            existente = candidatos_por_href[
                 href
+            ]
+
+            if (
+                titulo
+                and titulo
+                not in existente[
+                    "title"
+                ]
+            ):
+                existente[
+                    "title"
+                ] = (
+                    f"{existente['title']} | {titulo}"
+                    if existente[
+                        "title"
+                    ]
+                    else titulo
+                )
+
+            if (
+                corpo
+                and corpo
+                not in existente[
+                    "body"
+                ]
+            ):
+                existente[
+                    "body"
+                ] = (
+                    f"{existente['body']} | {corpo}"
+                    if existente[
+                        "body"
+                    ]
+                    else corpo
+                )
+
+    candidatos = list(
+        candidatos_por_href.values()
+    )
+
+    return candidatos[:40]
+
+
+def _juntar_candidatos_ddgs(
+    destino,
+    resultados,
+):
+    for resultado in (
+        resultados
+        or []
+    ):
+        if not _resultado_ddgs_valido(
+            resultado
+        ):
+            continue
+
+        href = str(
+            resultado.get(
+                "href"
+            )
+            or resultado.get(
+                "url"
+            )
+            or ""
+        ).strip()
+
+        if not href:
+            continue
+
+        titulo = (
+            _limpar_texto_exibicao(
+                resultado.get(
+                    "title"
+                )
+                or ""
+            )
+        )
+
+        corpo = (
+            _limpar_texto_exibicao(
+                resultado.get(
+                    "body"
+                )
+                or ""
+            )
+        )
+
+        if href not in destino:
+            destino[
+                href
+            ] = {
+                "href": href,
+                "title": titulo,
+                "body": corpo,
+            }
+            continue
+
+        existente = destino[
+            href
+        ]
+
+        if (
+            titulo
+            and titulo
+            not in existente[
+                "title"
+            ]
+        ):
+            existente[
+                "title"
+            ] = (
+                f"{existente['title']} | {titulo}"
+                if existente[
+                    "title"
+                ]
+                else titulo
             )
 
-            candidatos.append(
-                {
-                    "href": href,
-                    "title": (
-                        _limpar_texto_exibicao(
-                            resultado.get(
-                                "title"
-                            )
-                            or ""
-                        )
-                    ),
-                    "body": (
-                        _limpar_texto_exibicao(
-                            resultado.get(
-                                "body"
-                            )
-                            or ""
-                        )
-                    ),
-                }
+        if (
+            corpo
+            and corpo
+            not in existente[
+                "body"
+            ]
+        ):
+            existente[
+                "body"
+            ] = (
+                f"{existente['body']} | {corpo}"
+                if existente[
+                    "body"
+                ]
+                else corpo
             )
 
-        if len(candidatos) >= 25:
-            break
 
-    return candidatos[:30]
+def _pesquisar_web_por_identidade(
+    titulo,
+    autores,
+    isbn,
+):
+    titulo_limpo = (
+        _limpar_titulo_livro(
+            titulo
+        )
+    )
+
+    autores_limpos = (
+        _limpar_autores_validos(
+            autores
+            or []
+        )
+    )
+
+    if not titulo_limpo:
+        return []
+
+    autor_principal = (
+        autores_limpos[0]
+        if autores_limpos
+        else ""
+    )
+
+    isbn_limpo = normalizar_isbn(
+        isbn
+    )
+
+    base = (
+        f'"{titulo_limpo}"'
+    )
+
+    if autor_principal:
+        identidade = (
+            f'{base} "{autor_principal}"'
+        )
+    else:
+        identidade = base
+
+    consultas = [
+        identidade,
+        f"{identidade} {isbn_limpo}",
+        f"{identidade} editora",
+        f"{identidade} editor",
+        f"{identidade} publisher",
+        f'{identidade} "data de publicação"',
+        f'{identidade} "data de lançamento"',
+        f"{identidade} published",
+        f'{identidade} "classificação temática"',
+        f"{identidade} temática",
+        f"{identidade} género",
+        f"{identidade} categoria",
+        f"{titulo_limpo} {autor_principal}".strip(),
+        f"{titulo_limpo} editora".strip(),
+        f"{titulo_limpo} autor".strip(),
+        f"{titulo_limpo} data lançamento".strip(),
+        f"{titulo_limpo} classificação temática".strip(),
+    ]
+
+    candidatos_por_href = {}
+
+    try:
+        pesquisador = DDGS(
+            timeout=12
+        )
+    except Exception as erro:
+        print(
+            "[BookCatalog] Não foi possível iniciar "
+            "a pesquisa complementar:",
+            erro,
+        )
+        return []
+
+    for consulta in consultas:
+        try:
+            resultados = pesquisador.text(
+                consulta,
+                region="pt-pt",
+                safesearch="moderate",
+                max_results=20,
+                backend="auto",
+            ) or []
+        except Exception as erro:
+            print(
+                "[BookCatalog] Pesquisa complementar "
+                f"{consulta!r} falhou:",
+                erro,
+            )
+            resultados = []
+
+        print(
+            "[BookCatalog] Pesquisa complementar "
+            f"{consulta!r}: "
+            f"{len(resultados)} resultado(s)."
+        )
+
+        _juntar_candidatos_ddgs(
+            candidatos_por_href,
+            resultados,
+        )
+
+        # Tenta também uma região global quando a pesquisa portuguesa
+        # não devolve nada. Isto continua a ser pesquisa Web geral.
+        if not resultados:
+            try:
+                resultados_globais = (
+                    pesquisador.text(
+                        consulta,
+                        region="wt-wt",
+                        safesearch="moderate",
+                        max_results=20,
+                        backend="auto",
+                    )
+                    or []
+                )
+            except Exception:
+                resultados_globais = []
+
+            if resultados_globais:
+                print(
+                    "[BookCatalog] Pesquisa complementar global "
+                    f"{consulta!r}: "
+                    f"{len(resultados_globais)} resultado(s)."
+                )
+
+                _juntar_candidatos_ddgs(
+                    candidatos_por_href,
+                    resultados_globais,
+                )
+
+    candidatos = list(
+        candidatos_por_href.values()
+    )
+
+    candidatos.sort(
+        key=_pontuar_candidato_busca,
+        reverse=True,
+    )
+
+    return candidatos[:40]
+
+
+def _enriquecer_por_identidade(
+    consolidado,
+    isbn_limpo,
+):
+    if not consolidado:
+        return consolidado
+
+    faltam_metadados = any(
+        [
+            not consolidado.get(
+                "editora"
+            ),
+            not consolidado.get(
+                "data_publicacao"
+            ),
+            not consolidado.get(
+                "generos"
+            ),
+        ]
+    )
+
+    if not faltam_metadados:
+        return consolidado
+
+    titulo = consolidado.get(
+        "titulo"
+    )
+
+    autores = consolidado.get(
+        "autores"
+    ) or []
+
+    print(
+        "[BookCatalog] Faltam metadados. "
+        "A iniciar pesquisa complementar por título e autor..."
+    )
+
+    candidatos = (
+        _pesquisar_web_por_identidade(
+            titulo,
+            autores,
+            isbn_limpo,
+        )
+    )
+
+    print(
+        "[BookCatalog] Pesquisa complementar encontrou "
+        f"{len(candidatos)} candidato(s)."
+    )
+
+    if not candidatos:
+        return consolidado
+
+    metadados_snippets = (
+        _extrair_metadados_globais_busca(
+            candidatos,
+            isbn_limpo,
+        )
+    )
+
+    resultados = []
+
+    candidatos_paginas = (
+        candidatos[:24]
+    )
+
+    with ThreadPoolExecutor(
+        max_workers=min(
+            6,
+            len(candidatos_paginas),
+        )
+    ) as executor:
+        futuros = {
+            executor.submit(
+                _ler_candidato_web,
+                candidato,
+                isbn_limpo,
+            ): candidato
+            for candidato
+            in candidatos_paginas
+        }
+
+        for futuro in as_completed(
+            futuros
+        ):
+            try:
+                dados = futuro.result()
+            except Exception as erro:
+                print(
+                    "[BookCatalog] Erro na pesquisa complementar:",
+                    erro,
+                )
+                dados = None
+
+            if dados:
+                resultados.append(
+                    dados
+                )
+
+    complemento = (
+        _consolidar_resultados_web(
+            resultados,
+            isbn_limpo,
+        )
+        if resultados
+        else None
+    )
+
+    if not complemento:
+        complemento = {
+            "editora": (
+                metadados_snippets.get(
+                    "editora"
+                )
+            ),
+            "data_publicacao": (
+                metadados_snippets.get(
+                    "data_publicacao"
+                )
+            ),
+            "generos": (
+                metadados_snippets.get(
+                    "generos"
+                )
+                or []
+            ),
+        }
+
+    if (
+        not consolidado.get(
+            "editora"
+        )
+        and complemento.get(
+            "editora"
+        )
+    ):
+        consolidado[
+            "editora"
+        ] = complemento[
+            "editora"
+        ]
+
+    if (
+        not consolidado.get(
+            "data_publicacao"
+        )
+        and complemento.get(
+            "data_publicacao"
+        )
+    ):
+        consolidado[
+            "data_publicacao"
+        ] = complemento[
+            "data_publicacao"
+        ]
+
+    generos = list(
+        consolidado.get(
+            "generos"
+        )
+        or []
+    )
+
+    for genero in (
+        complemento.get(
+            "generos"
+        )
+        or []
+    ):
+        if (
+            genero
+            and genero
+            not in generos
+        ):
+            generos.append(
+                genero
+            )
+
+    consolidado[
+        "generos"
+    ] = generos[:3]
+
+    print(
+        "[BookCatalog] Resultado após pesquisa complementar: "
+        f"editora={consolidado.get('editora')!r} | "
+        f"data={consolidado.get('data_publicacao')!r} | "
+        f"géneros={consolidado.get('generos')!r}"
+    )
+
+    return consolidado
 
 
 def _descobrir_links_produto(isbn):
@@ -3193,20 +4066,27 @@ def _extrair_autor_resultado_busca(
     candidatos = []
 
     if titulo:
-        encontrado = re.search(
-            r"\s+de\s+([A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][A-Za-zÀ-ÿ'’.\- ]{2,70})(?:\s+[|–—-]|$)",
-            titulo,
-        )
+        padroes_titulo = [
+            r"\s+de\s+([A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][A-Za-zÀ-ÿ0-9'’.\- ]{2,70})(?:\s+[|–—-]|$)",
+            r"\s+by\s+([A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][A-Za-zÀ-ÿ0-9'’.\- ]{2,70})(?:\s+[|–—-]|$)",
+        ]
 
-        if encontrado:
-            candidatos.append(
-                encontrado.group(1)
+        for padrao in padroes_titulo:
+            encontrado = re.search(
+                padrao,
+                titulo,
+                flags=re.I,
             )
+
+            if encontrado:
+                candidatos.append(
+                    encontrado.group(1)
+                )
 
     if corpo:
         padroes = [
-            r"Autor(?:\(a\)|es)?\s*:?\s*([A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][A-Za-zÀ-ÿ'’.\- ]{2,70})",
-            r"Author\s*:?\s*([A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][A-Za-zÀ-ÿ'’.\- ]{2,70})",
+            r"Autor(?:\(a\)|es)?\s*:?\s*([A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][A-Za-zÀ-ÿ0-9'’.\- ]{2,70})",
+            r"Author\s*:?\s*([A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][A-Za-zÀ-ÿ0-9'’.\- ]{2,70})",
         ]
 
         for padrao in padroes:
@@ -3218,7 +4098,7 @@ def _extrair_autor_resultado_busca(
 
             if encontrado:
                 valor = re.split(
-                    r"\b(?:ISBN|Editora|Editor|Publisher|Data|Date|Páginas|Paginas|Género|Genero)\b",
+                    r"\b(?:ISBN|EAN|Editora|Editor|Publisher|Data|Date|Páginas|Paginas|Género|Genero|Categoria|Temática|Tematica)\b",
                     encontrado.group(1),
                     maxsplit=1,
                     flags=re.I,
@@ -3237,6 +4117,369 @@ def _extrair_autor_resultado_busca(
     )
 
     return limpos[:3]
+
+
+def _extrair_valor_rotulado_busca(
+    texto,
+    rotulos,
+):
+    texto = _limpar_texto_exibicao(
+        texto
+    )
+
+    if not texto:
+        return None
+
+    limites = (
+        r"Autor(?:\(es\)|\(a\))?",
+        r"Author",
+        r"Editor(?:a)?",
+        r"Publisher",
+        r"Editorial",
+        r"ISBN",
+        r"EAN",
+        r"Data\s+de\s+publica[cç][aã]o",
+        r"Data\s+de\s+Lan[cç]amento",
+        r"Published",
+        r"Publication\s+Date",
+        r"Classifica[cç][aã]o\s+Tem[aá]tica",
+        r"Categoria(?:s)?",
+        r"G[eé]nero(?:s)?",
+        r"P[aá]ginas",
+        r"Pages",
+        r"Idioma",
+        r"Language",
+        r"Dimens[oõ]es",
+        r"Encaderna[cç][aã]o",
+    )
+
+    limite = "|".join(
+        limites
+    )
+
+    for rotulo in rotulos:
+        padrao = (
+            rf"(?is)(?:{rotulo})\s*:?\s*"
+            rf"(.+?)"
+            rf"(?=\s+(?:{limite})\s*:|$)"
+        )
+
+        encontrado = re.search(
+            padrao,
+            texto,
+        )
+
+        if not encontrado:
+            continue
+
+        valor = (
+            _limpar_texto_exibicao(
+                encontrado.group(1)
+            )
+        )
+
+        valor = valor.strip(
+            " .,:;|-"
+        )
+
+        if valor:
+            return valor
+
+    return None
+
+
+def _extrair_editora_resultado_busca(
+    titulo_busca,
+    corpo_busca,
+):
+    texto = (
+        f"{titulo_busca} "
+        f"{corpo_busca}"
+    )
+
+    valor = _extrair_valor_rotulado_busca(
+        texto,
+        [
+            r"Editor(?:a)?",
+            r"Publisher",
+            r"Editorial",
+        ],
+    )
+
+    return _limpar_editora(
+        valor
+    )
+
+
+def _extrair_data_resultado_busca(
+    titulo_busca,
+    corpo_busca,
+):
+    texto = (
+        f"{titulo_busca} "
+        f"{corpo_busca}"
+    )
+
+    valor = _extrair_valor_rotulado_busca(
+        texto,
+        [
+            r"Data\s+de\s+publica[cç][aã]o",
+            r"Data\s+de\s+Lan[cç]amento",
+            r"Edi[cç][aã]o",
+            r"Published",
+            r"Publication\s+Date",
+        ],
+    )
+
+    return (
+        _normalizar_data_catalogo(
+            valor
+        )
+        if valor
+        else None
+    )
+
+
+def _extrair_generos_resultado_busca(
+    titulo_busca,
+    corpo_busca,
+):
+    texto = (
+        f"{titulo_busca} "
+        f"{corpo_busca}"
+    )
+
+    classificacao = (
+        _extrair_valor_rotulado_busca(
+            texto,
+            [
+                r"Classifica[cç][aã]o\s+Tem[aá]tica",
+                r"Tem[aá]tica",
+                r"Sub-?categoria",
+                r"Categoria(?:s)?",
+                r"G[eé]nero(?:s)?",
+                r"Subject(?:s)?",
+            ],
+        )
+    )
+
+    if not classificacao:
+        return []
+
+    normalizado = (
+        _normalizar_texto(
+            classificacao
+        )
+    )
+
+    generos = (
+        _generos_da_classificacao(
+            classificacao
+        )
+        or []
+    )
+
+    # Termos editoriais comuns em catálogos portugueses.
+    if (
+        any(
+            termo in normalizado
+            for termo in (
+                "infantis e juvenis",
+                "infantil e juvenil",
+                "literatura juvenil",
+                "juvenil",
+                "10 a 14 anos",
+                "10-14",
+                "10 14",
+            )
+        )
+        and "Infantil"
+        not in generos
+    ):
+        generos.append(
+            "Infantil"
+        )
+
+    # "Não Ficção" não deve ser confundido com "Ficção".
+    if (
+        "nao ficcao"
+        in normalizado
+    ):
+        generos = [
+            genero
+            for genero in generos
+            if genero != "Ficção"
+        ]
+
+    return generos[:3]
+
+
+def _pontuar_candidato_busca(
+    candidato,
+):
+    if not isinstance(
+        candidato,
+        dict,
+    ):
+        return 0
+
+    texto = (
+        f"{candidato.get('title', '')} "
+        f"{candidato.get('body', '')}"
+    )
+
+    normalizado = (
+        _normalizar_texto(
+            texto
+        )
+    )
+
+    pontos = 0
+
+    termos = (
+        (
+            (
+                "data de lancamento",
+                "data de publicacao",
+                "published",
+                "publication date",
+                "edicao",
+            ),
+            5,
+        ),
+        (
+            (
+                "classificacao tematica",
+                "categoria",
+                "genero",
+                "fantasia",
+                "juvenil",
+                "infantil",
+            ),
+            5,
+        ),
+        (
+            (
+                "editora",
+                "editor",
+                "publisher",
+                "editorial",
+            ),
+            4,
+        ),
+        (
+            (
+                "autor",
+                "author",
+            ),
+            3,
+        ),
+        (
+            (
+                "isbn",
+                "ean",
+            ),
+            2,
+        ),
+    )
+
+    for palavras, valor in termos:
+        if any(
+            palavra in normalizado
+            for palavra in palavras
+        ):
+            pontos += valor
+
+    return pontos
+
+
+def _extrair_metadados_globais_busca(
+    candidatos,
+    isbn_limpo,
+):
+    editoras = []
+    datas = []
+    generos = []
+
+    for candidato in candidatos:
+        dados = _dados_do_resultado_busca(
+            candidato,
+            isbn_limpo,
+        )
+
+        if not dados:
+            continue
+
+        editora = dados.get(
+            "editora"
+        )
+
+        if editora:
+            editora = (
+                _limpar_editora(
+                    editora
+                )
+            )
+
+            if editora:
+                editoras.append(
+                    editora
+                )
+
+        data = dados.get(
+            "data_publicacao"
+        )
+
+        if data:
+            data = (
+                _normalizar_data_catalogo(
+                    data
+                )
+            )
+
+            if data:
+                datas.append(
+                    {
+                        "data_publicacao": data
+                    }
+                )
+
+        for genero in (
+            dados.get(
+                "generos"
+            )
+            or []
+        ):
+            if (
+                genero
+                and genero
+                not in generos
+            ):
+                generos.append(
+                    genero
+                )
+
+    editora_final = (
+        _escolher_valor_consenso(
+            editoras
+        )
+        if editoras
+        else None
+    )
+
+    data_final = (
+        _escolher_data_consenso(
+            datas
+        )
+        if datas
+        else None
+    )
+
+    return {
+        "editora": editora_final,
+        "data_publicacao": data_final,
+        "generos": generos[:3],
+    }
 
 
 def _dados_do_resultado_busca(
@@ -3298,10 +4541,31 @@ def _dados_do_resultado_busca(
         )
     )
 
+    editora = (
+        _extrair_editora_resultado_busca(
+            titulo_busca,
+            corpo_busca,
+        )
+    )
+
+    data_publicacao = (
+        _extrair_data_resultado_busca(
+            titulo_busca,
+            corpo_busca,
+        )
+    )
+
+    generos = (
+        _extrair_generos_resultado_busca(
+            titulo_busca,
+            corpo_busca,
+        )
+    )
+
     if not titulo:
         return None
 
-    return {
+    dados = {
         "sucesso": True,
         "origem": "Pesquisa Web",
         "titulo": titulo,
@@ -3309,11 +4573,19 @@ def _dados_do_resultado_busca(
             isbn
         ),
         "autores": autores,
-        "editora": None,
-        "data_publicacao": None,
-        "generos": [],
+        "editora": editora,
+        "data_publicacao": (
+            data_publicacao
+        ),
+        "generos": generos,
         "url_origem": href,
     }
+
+    return (
+        _sanitizar_resultado_web(
+            dados
+        )
+    )
 
 
 def _mesclar_pagina_com_busca(
@@ -3321,14 +4593,32 @@ def _mesclar_pagina_com_busca(
     dados_busca,
 ):
     if not dados_pagina:
-        return dados_busca
+        return None
+
+    pagina = (
+        _sanitizar_resultado_web(
+            dict(
+                dados_pagina
+            )
+        )
+    )
+
+    if not pagina:
+        return None
 
     if not dados_busca:
-        return dados_pagina
+        return pagina
 
-    pagina = dict(
-        dados_pagina
+    busca = (
+        _sanitizar_resultado_web(
+            dict(
+                dados_busca
+            )
+        )
     )
+
+    if not busca:
+        return pagina
 
     titulo_pagina = (
         pagina.get(
@@ -3337,18 +4627,20 @@ def _mesclar_pagina_com_busca(
     )
 
     titulo_busca = (
-        dados_busca.get(
+        busca.get(
             "titulo"
         )
     )
 
-    if titulo_busca:
+    # O título da pesquisa só corrige um título claramente truncado.
+    if (
+        titulo_pagina
+        and titulo_busca
+    ):
         chave_pagina = (
             _titulo_para_comparacao(
                 titulo_pagina
             )
-            if titulo_pagina
-            else ""
         )
 
         chave_busca = (
@@ -3357,28 +4649,24 @@ def _mesclar_pagina_com_busca(
             )
         )
 
-        # Corrige títulos truncados como "O Diário" quando o
-        # resultado de pesquisa traz "O Diário de um Banana 1".
         if (
-            not titulo_pagina
-            or (
-                chave_pagina
-                and chave_busca.startswith(
-                    chave_pagina + " "
-                )
-                and len(
-                    chave_busca.split()
-                )
-                >= len(
-                    chave_pagina.split()
-                )
-                + 2
+            chave_pagina
+            and chave_busca
+            and chave_busca.startswith(
+                chave_pagina + " "
             )
+            and len(
+                chave_busca.split()
+            )
+            >= len(
+                chave_pagina.split()
+            ) + 2
         ):
             pagina[
                 "titulo"
             ] = titulo_busca
 
+    # Autor do snippet só entra se a página não tiver autor.
     autores_pagina = (
         _limpar_autores_validos(
             pagina.get(
@@ -3390,24 +4678,74 @@ def _mesclar_pagina_com_busca(
 
     autores_busca = (
         _limpar_autores_validos(
-            dados_busca.get(
+            busca.get(
                 "autores"
             )
             or []
         )
     )
 
-    if (
-        not autores_pagina
-        and autores_busca
-    ):
-        pagina[
-            "autores"
-        ] = autores_busca
-    else:
+    if autores_pagina:
         pagina[
             "autores"
         ] = autores_pagina
+    elif autores_busca:
+        pagina[
+            "autores"
+        ] = autores_busca
+
+    # Campos objetivos podem ser enriquecidos pelo snippet.
+    if (
+        not pagina.get(
+            "editora"
+        )
+        and busca.get(
+            "editora"
+        )
+    ):
+        pagina[
+            "editora"
+        ] = busca.get(
+            "editora"
+        )
+
+    if (
+        not pagina.get(
+            "data_publicacao"
+        )
+        and busca.get(
+            "data_publicacao"
+        )
+    ):
+        pagina[
+            "data_publicacao"
+        ] = busca.get(
+            "data_publicacao"
+        )
+
+    generos_pagina = (
+        pagina.get(
+            "generos"
+        )
+        or []
+    )
+
+    generos_busca = (
+        busca.get(
+            "generos"
+        )
+        or []
+    )
+
+    for genero in generos_busca:
+        if genero not in generos_pagina:
+            generos_pagina.append(
+                genero
+            )
+
+    pagina[
+        "generos"
+    ] = generos_pagina[:3]
 
     return (
         _sanitizar_resultado_web(
@@ -3594,16 +4932,9 @@ def _ler_candidato_web(
             erro,
         )
 
-    # O snippet do motor de pesquisa é usado apenas se pelo menos
-    # o título for válido e o ISBN aparece explicitamente no resultado.
-    if (
-        dados_busca
-        and _resultado_web_valido(
-            dados_busca
-        )
-    ):
-        return dados_busca
-
+    # O snippet do motor de pesquisa serve apenas para complementar
+    # uma página real. Nunca é usado sozinho como ficha bibliográfica,
+    # pois pode conter texto de interface do site.
     return None
 
 
@@ -3645,13 +4976,29 @@ def procurar_livro_pesquisa_web(isbn):
             ),
         }
 
-    candidatos = candidatos[:14]
+    candidatos = sorted(
+        candidatos,
+        key=_pontuar_candidato_busca,
+        reverse=True,
+    )
+
+    metadados_busca = (
+        _extrair_metadados_globais_busca(
+            candidatos,
+            isbn_limpo,
+        )
+    )
+
+    candidatos_paginas = (
+        candidatos[:24]
+    )
+
     resultados = []
 
     with ThreadPoolExecutor(
         max_workers=min(
             6,
-            len(candidatos),
+            len(candidatos_paginas),
         )
     ) as executor:
         futuros = {
@@ -3661,7 +5008,7 @@ def procurar_livro_pesquisa_web(isbn):
                 isbn_limpo,
             ): candidato
             for candidato
-            in candidatos
+            in candidatos_paginas
         }
 
         for futuro in as_completed(
@@ -3696,6 +5043,69 @@ def procurar_livro_pesquisa_web(isbn):
                 "metadados bibliográficos suficientemente fiáveis."
             ),
         }
+
+    # Os snippets nunca substituem título ou autor.
+    # Servem apenas para completar campos objetivos que estejam em falta.
+    if (
+        not consolidado.get(
+            "editora"
+        )
+        and metadados_busca.get(
+            "editora"
+        )
+    ):
+        consolidado[
+            "editora"
+        ] = metadados_busca[
+            "editora"
+        ]
+
+    if (
+        not consolidado.get(
+            "data_publicacao"
+        )
+        and metadados_busca.get(
+            "data_publicacao"
+        )
+    ):
+        consolidado[
+            "data_publicacao"
+        ] = metadados_busca[
+            "data_publicacao"
+        ]
+
+    generos_atuais = list(
+        consolidado.get(
+            "generos"
+        )
+        or []
+    )
+
+    for genero in (
+        metadados_busca.get(
+            "generos"
+        )
+        or []
+    ):
+        if (
+            genero
+            and genero
+            not in generos_atuais
+        ):
+            generos_atuais.append(
+                genero
+            )
+
+    consolidado[
+        "generos"
+    ] = generos_atuais[:3]
+
+    consolidado = (
+        _enriquecer_por_identidade(
+            consolidado,
+            isbn_limpo,
+        )
+    )
 
     print(
         "[BookCatalog] Resultado Web consolidado: "
