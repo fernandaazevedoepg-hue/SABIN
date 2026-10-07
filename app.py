@@ -2373,6 +2373,7 @@ def pagina_gestao_catalogo():
                                         type="text",
                                         placeholder="ISBN-10 ou ISBN-13",
                                         className="sale-number-input",
+                                        debounce=0.7,
                                     ),
                                     dcc.Loading(
                                         id="new-book-isbn-loading",
@@ -4387,13 +4388,14 @@ def preencher_novo_livro_por_isbn(isbn):
         str(isbn or ""),
     ).upper()
 
+    # Enquanto o ISBN ainda está incompleto, limpa os dados do livro anterior.
     if len(isbn_limpo) not in (10, 13):
         return (
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            no_update,
+            "",
+            "",
+            "",
+            None,
+            [],
             "",
         )
 
@@ -4406,12 +4408,13 @@ def preencher_novo_livro_por_isbn(isbn):
             "Erro ao consultar ISBN:",
             erro,
         )
+
         return (
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            no_update,
+            "",
+            "",
+            "",
+            None,
+            [],
             html.Div(
                 "Não foi possível consultar o ISBN agora. Podes preencher os dados manualmente.",
                 className="sale-neutral-message compact-message",
@@ -4420,11 +4423,11 @@ def preencher_novo_livro_por_isbn(isbn):
 
     if not resultado.get("sucesso"):
         return (
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            no_update,
+            "",
+            "",
+            "",
+            None,
+            [],
             html.Div(
                 "ISBN não encontrado. Podes preencher os dados manualmente.",
                 className="sale-neutral-message compact-message",
@@ -4433,26 +4436,13 @@ def preencher_novo_livro_por_isbn(isbn):
 
     origem = resultado.get("origem")
 
-    if origem == "Base de Dados Local":
-        return (
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            no_update,
-            html.Div(
-                "Este ISBN já existe no catálogo.",
-                className="sale-error-message compact-message",
-            ),
-        )
-
     autores = resultado.get("autores") or []
 
     if isinstance(autores, str):
-        autores_texto = autores
+        autores_texto = autores.strip()
     else:
         autores_texto = ", ".join(
-            str(autor)
+            str(autor).strip()
             for autor in autores
             if autor
         )
@@ -4461,9 +4451,66 @@ def preencher_novo_livro_por_isbn(isbn):
         resultado.get("generos") or []
     )
 
+    titulo = (
+        str(
+            resultado.get("titulo")
+            or ""
+        ).strip()
+    )
+
+    editora = (
+        str(
+            resultado.get("editora")
+            or ""
+        ).strip()
+    )
+
+    data_publicacao = normalizar_data_api(
+        resultado.get("data_publicacao")
+    )
+
+    if origem == "Base de Dados Local":
+        return (
+            titulo,
+            autores_texto,
+            editora,
+            data_publicacao,
+            genero_ids,
+            html.Div(
+                "Este ISBN já existe no catálogo.",
+                className="sale-error-message compact-message",
+            ),
+        )
+
     nome_origem = origem or "fonte externa"
 
-    if genero_ids:
+    campos_em_falta = []
+
+    if not titulo:
+        campos_em_falta.append("Título")
+
+    if not autores_texto:
+        campos_em_falta.append("Autor(es)")
+
+    if not editora:
+        campos_em_falta.append("Editora")
+
+    if not data_publicacao:
+        campos_em_falta.append("Data de publicação")
+
+    if not genero_ids:
+        campos_em_falta.append("Género(s)")
+
+    if campos_em_falta:
+        mensagem = (
+            f"Dados parcialmente encontrados em {nome_origem}. "
+            f"Em falta: {', '.join(campos_em_falta)}. "
+            "Preenche ou confirma os campos antes de adicionar o livro."
+        )
+        classe_mensagem = (
+            "sale-neutral-message compact-message"
+        )
+    else:
         mensagem = (
             f"Dados encontrados em {nome_origem} "
             "e preenchidos automaticamente."
@@ -4471,23 +4518,15 @@ def preencher_novo_livro_por_isbn(isbn):
         classe_mensagem = (
             "sale-success-message compact-message"
         )
-    else:
-        mensagem = (
-            f"Dados encontrados em {nome_origem}. "
-            "Confirma o género antes de adicionar o livro."
-        )
-        classe_mensagem = (
-            "sale-neutral-message compact-message"
-        )
 
+    # Importante: devolve valores vazios quando a fonte não encontrou
+    # um campo. Não usa no_update, para não manter dados do ISBN anterior.
     return (
-        resultado.get("titulo") or no_update,
-        autores_texto or no_update,
-        resultado.get("editora") or no_update,
-        normalizar_data_api(
-            resultado.get("data_publicacao")
-        ) or no_update,
-        genero_ids or no_update,
+        titulo,
+        autores_texto,
+        editora,
+        data_publicacao,
+        genero_ids,
         html.Div(
             mensagem,
             className=classe_mensagem,
