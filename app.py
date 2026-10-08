@@ -742,12 +742,22 @@ def criar_grafico_stock(dados):
         "Sem procura recente": "#94a3b8",
     }
 
+    ordem_niveis = [
+        "Crítico",
+        "Atenção",
+        "Normal",
+        "Sem procura recente",
+    ]
+
     figura = go.Figure()
 
-    for nivel in dados["nivel"].unique():
+    for nivel in ordem_niveis:
         grupo = dados[
             dados["nivel"] == nivel
         ]
+
+        if grupo.empty:
+            continue
 
         figura.add_trace(
             go.Scatter(
@@ -757,11 +767,15 @@ def criar_grafico_stock(dados):
                 name=nivel,
                 text=grupo["titulo"],
                 marker={
-                    "size": 10,
+                    "size": 11,
                     "color": cores.get(
                         nivel,
                         "#64748b",
                     ),
+                    "line": {
+                        "color": "#ffffff",
+                        "width": 1.4,
+                    },
                 },
                 customdata=grupo[
                     [
@@ -781,32 +795,38 @@ def criar_grafico_stock(dados):
         )
 
     figura.update_layout(
-        height=390,
+        height=440,
+        autosize=True,
         margin={
-            "l": 20,
-            "r": 20,
-            "t": 10,
-            "b": 20,
+            "l": 62,
+            "r": 28,
+            "t": 82,
+            "b": 58,
         },
         plot_bgcolor="white",
         paper_bgcolor="white",
         legend={
             "orientation": "h",
             "yanchor": "bottom",
-            "y": 1.02,
-            "xanchor": "left",
-            "x": 0,
+            "y": 1.12,
+            "xanchor": "center",
+            "x": 0.5,
         },
+        hovermode="closest",
     )
 
     figura.update_xaxes(
         title="Média Mensal de Vendas",
         gridcolor="#e2e8f0",
+        zeroline=False,
+        automargin=True,
     )
 
     figura.update_yaxes(
         title="Stock Disponível",
         gridcolor="#e2e8f0",
+        zeroline=False,
+        automargin=True,
     )
 
     return figura
@@ -1265,6 +1285,11 @@ def criar_sidebar():
                             html.Button(
                                 "Stock e Reposição",
                                 id="btn-stock",
+                                className="submenu-button",
+                            ),
+                            html.Button(
+                                "Interpretação",
+                                id="btn-interpretacao-stock",
                                 className="submenu-button",
                             ),
                             html.Button(
@@ -3155,6 +3180,469 @@ def criar_tabela_stock_completo(dados):
     )
 
 
+
+def formatar_numero_simples(
+    valor,
+    casas=2,
+):
+    if valor is None or pd.isna(valor):
+        return "—"
+
+    return (
+        f"{float(valor):.{casas}f}"
+        .replace(".", ",")
+    )
+
+
+def criar_interpretacao_stock(
+    dados,
+    stock_completo,
+):
+    dados = dados.copy()
+    stock_completo = stock_completo.copy()
+
+    colunas_numericas_dados = [
+        "stock_disponivel",
+        "media_mensal_vendas",
+        "meses_cobertura",
+        "quantidade_recomendada",
+    ]
+
+    for coluna in colunas_numericas_dados:
+        if coluna in dados.columns:
+            dados[coluna] = pd.to_numeric(
+                dados[coluna],
+                errors="coerce",
+            )
+
+    colunas_numericas_stock = [
+        "stock_disponivel",
+        "media_mensal_vendas",
+        "meses_cobertura",
+        "estoque_atual",
+        "qtd_reservada",
+    ]
+
+    for coluna in colunas_numericas_stock:
+        if coluna in stock_completo.columns:
+            stock_completo[coluna] = pd.to_numeric(
+                stock_completo[coluna],
+                errors="coerce",
+            )
+
+    total_livros = len(stock_completo)
+
+    criticos = dados[
+        dados["nivel"] == "Crítico"
+    ].copy()
+
+    atencao = dados[
+        dados["nivel"] == "Atenção"
+    ].copy()
+
+    normais = dados[
+        dados["nivel"] == "Normal"
+    ].copy()
+
+    sem_procura = stock_completo[
+        stock_completo["nivel"] == "Sem procura recente"
+    ].copy()
+
+    alertas = dados[
+        dados["nivel"].isin([
+            "Crítico",
+            "Atenção",
+        ])
+    ].copy()
+
+    unidades_repor = int(
+        dados[
+            "quantidade_recomendada"
+        ].fillna(0).sum()
+    )
+
+    percentagem_alerta = (
+        (len(alertas) / total_livros) * 100
+        if total_livros
+        else 0
+    )
+
+    livro_mais_urgente = None
+
+    if not alertas.empty:
+        alertas_ordenados = alertas.assign(
+            prioridade=alertas[
+                "nivel"
+            ].map({
+                "Crítico": 0,
+                "Atenção": 1,
+            }).fillna(2),
+        ).sort_values(
+            by=[
+                "prioridade",
+                "meses_cobertura",
+                "stock_disponivel",
+            ],
+            na_position="last",
+        )
+
+        livro_mais_urgente = alertas_ordenados.iloc[0]
+
+    livro_maior_procura = None
+
+    dados_procura = stock_completo[
+        stock_completo[
+            "media_mensal_vendas"
+        ].fillna(0) > 0
+    ].copy()
+
+    if not dados_procura.empty:
+        livro_maior_procura = dados_procura.sort_values(
+            by="media_mensal_vendas",
+            ascending=False,
+        ).iloc[0]
+
+    media_procura_geral = (
+        dados_procura[
+            "media_mensal_vendas"
+        ].mean()
+        if not dados_procura.empty
+        else 0
+    )
+
+    baixa_procura = stock_completo[
+        (
+            stock_completo[
+                "media_mensal_vendas"
+            ].fillna(0) > 0
+        )
+        & (
+            stock_completo[
+                "media_mensal_vendas"
+            ] < media_procura_geral
+        )
+    ].copy().sort_values(
+        by="media_mensal_vendas",
+        ascending=True,
+    ).head(6)
+
+    sem_procura_lista = stock_completo[
+        stock_completo[
+            "media_mensal_vendas"
+        ].fillna(0) <= 0
+    ].copy().head(4)
+
+    avisos = []
+
+    for _, linha in criticos.head(4).iterrows():
+        avisos.append({
+            "classe": "warning-danger",
+            "titulo": f"{linha['titulo']} necessita de reposição urgente.",
+            "descricao": (
+                f"Stock disponível: {int(linha['stock_disponivel']) if pd.notna(linha['stock_disponivel']) else 0} | "
+                f"Cobertura: {formatar_numero_simples(linha['meses_cobertura'])} mês(es) | "
+                f"Repor: {int(linha['quantidade_recomendada']) if pd.notna(linha['quantidade_recomendada']) else 0} unidade(s)."
+            ),
+        })
+
+    for _, linha in atencao.head(3).iterrows():
+        avisos.append({
+            "classe": "warning-soft",
+            "titulo": f"{linha['titulo']} está em nível de atenção.",
+            "descricao": (
+                f"Stock disponível: {int(linha['stock_disponivel']) if pd.notna(linha['stock_disponivel']) else 0} | "
+                f"Cobertura: {formatar_numero_simples(linha['meses_cobertura'])} mês(es) | "
+                f"Repor: {int(linha['quantidade_recomendada']) if pd.notna(linha['quantidade_recomendada']) else 0} unidade(s)."
+            ),
+        })
+
+    if not avisos:
+        avisos.append({
+            "classe": "warning-info",
+            "titulo": "Não existem avisos críticos neste momento.",
+            "descricao": "O stock atual não apresenta livros em situação Crítica ou Atenção.",
+        })
+
+    informacoes = []
+
+    informacoes.append({
+        "titulo": "Situação Geral",
+        "descricao": (
+            f"{len(normais)} livro(s) estão em situação Normal e {len(sem_procura)} estão sem procura recente."
+        ),
+    })
+
+    if livro_maior_procura is not None:
+        informacoes.append({
+            "titulo": "Maior Procura",
+            "descricao": (
+                f"{livro_maior_procura['titulo']} lidera a procura com média de "
+                f"{formatar_numero_simples(livro_maior_procura['media_mensal_vendas'])} unidade(s) por mês."
+            ),
+        })
+
+    if livro_mais_urgente is not None:
+        informacoes.append({
+            "titulo": "Maior Prioridade",
+            "descricao": (
+                f"{livro_mais_urgente['titulo']} é a reposição mais urgente, com cobertura de "
+                f"{formatar_numero_simples(livro_mais_urgente['meses_cobertura'])} mês(es)."
+            ),
+        })
+
+    informacoes.append({
+        "titulo": "Reposição Recomendada",
+        "descricao": f"O sistema recomenda a reposição total de {unidades_repor} unidade(s).",
+    })
+
+    recomendacoes = []
+
+    if not criticos.empty:
+        recomendacoes.append(
+            "Priorizar a reposição imediata dos livros em estado Crítico."
+        )
+
+    if not atencao.empty:
+        recomendacoes.append(
+            "Acompanhar os livros em Atenção para evitar a passagem para o estado Crítico."
+        )
+
+    if livro_maior_procura is not None:
+        recomendacoes.append(
+            f"Reforçar o acompanhamento de {livro_maior_procura['titulo']}, por apresentar a maior procura média mensal."
+        )
+
+    if not sem_procura_lista.empty:
+        recomendacoes.append(
+            "Avaliar os livros sem procura recente antes de aumentar o respetivo stock."
+        )
+
+    if not recomendacoes:
+        recomendacoes.append(
+            "O stock encontra-se equilibrado e não existem ações prioritárias neste momento."
+        )
+
+    resumo_cards = [
+        {
+            "titulo": "Críticos",
+            "valor": str(len(criticos)),
+            "descricao": "Livros com reposição urgente.",
+            "classe": "danger",
+        },
+        {
+            "titulo": "Alertas Ativos",
+            "valor": (
+                f"{percentagem_alerta:.1f}%"
+                .replace(".", ",")
+            ),
+            "descricao": f"{len(alertas)} de {total_livros} livro(s) estão em Crítico ou Atenção.",
+            "classe": "warning",
+        },
+        {
+            "titulo": "Maior Procura",
+            "valor": (
+                livro_maior_procura["titulo"]
+                if livro_maior_procura is not None
+                else "—"
+            ),
+            "descricao": (
+                f"Média de {formatar_numero_simples(livro_maior_procura['media_mensal_vendas'])} unidade(s)/mês."
+                if livro_maior_procura is not None
+                else "Sem dados suficientes."
+            ),
+            "classe": "success",
+        },
+        {
+            "titulo": "Reposição Recomendada",
+            "valor": str(unidades_repor),
+            "descricao": "Total de unidades sugeridas para reposição.",
+            "classe": "info",
+        },
+    ]
+
+    return html.Div(
+        className="interpretation-page",
+        children=[
+            html.Div(
+                className="page-header",
+                children=[
+                    html.H2("Interpretação do Stock"),
+                    html.P(
+                        "Leitura automática dos dados de stock, procura e reposição para apoiar a análise perante o júri."
+                    ),
+                ],
+            ),
+            html.Div(
+                className="interpretation-summary-grid",
+                children=[
+                    html.Div(
+                        className=f"interpretation-summary-card {card['classe']}",
+                        children=[
+                            html.Span(
+                                card["titulo"],
+                                className="interpretation-summary-label",
+                            ),
+                            html.H3(card["valor"]),
+                            html.P(card["descricao"]),
+                        ],
+                    )
+                    for card in resumo_cards
+                ],
+            ),
+            html.Div(
+                className="interpretation-panel",
+                children=[
+                    html.Div(
+                        className="interpretation-panel-header",
+                        children=[
+                            html.H3("Avisos"),
+                            html.P("Situações que merecem atenção imediata."),
+                        ],
+                    ),
+                    html.Div(
+                        className="interpretation-message-list",
+                        children=[
+                            html.Div(
+                                className=f"interpretation-message-card {item['classe']}",
+                                children=[
+                                    html.Strong(item["titulo"]),
+                                    html.P(item["descricao"]),
+                                ],
+                            )
+                            for item in avisos
+                        ],
+                    ),
+                ],
+            ),
+            html.Div(
+                className="interpretation-panel",
+                children=[
+                    html.Div(
+                        className="interpretation-panel-header",
+                        children=[
+                            html.H3("Informações"),
+                            html.P("Oportunidades e sinais positivos identificados automaticamente."),
+                        ],
+                    ),
+                    html.Div(
+                        className="interpretation-message-list",
+                        children=[
+                            html.Div(
+                                className="interpretation-message-card positive",
+                                children=[
+                                    html.Strong(item["titulo"]),
+                                    html.P(item["descricao"]),
+                                ],
+                            )
+                            for item in informacoes
+                        ],
+                    ),
+                ],
+            ),
+            html.Div(
+                className="interpretation-panel",
+                children=[
+                    html.Div(
+                        className="interpretation-panel-header",
+                        children=[
+                            html.H3("Livros com Baixo Desempenho"),
+                            html.P(
+                                (
+                                    f"Livros com procura abaixo da média mensal ({formatar_numero_simples(media_procura_geral)} unidades)."
+                                    if media_procura_geral > 0
+                                    else "Não existem dados suficientes para comparar a procura média mensal."
+                                )
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        className="interpretation-performance-list",
+                        children=(
+                            [
+                                html.Div(
+                                    className="interpretation-performance-item",
+                                    children=[
+                                        html.Div(
+                                            className="interpretation-performance-main",
+                                            children=[
+                                                html.Strong(linha["titulo"]),
+                                                html.Span(
+                                                    f"Stock disponível: {int(linha['stock_disponivel']) if pd.notna(linha['stock_disponivel']) else 0} | Nível: {linha['nivel'] or '—'}"
+                                                ),
+                                            ],
+                                        ),
+                                        html.Div(
+                                            className="interpretation-performance-side",
+                                            children=[
+                                                html.Strong(
+                                                    f"{formatar_numero_simples(linha['media_mensal_vendas'])} vendas/mês"
+                                                ),
+                                                html.Span(
+                                                    f"Cobertura: {formatar_numero_simples(linha['meses_cobertura'])} meses"
+                                                ),
+                                            ],
+                                        ),
+                                    ],
+                                )
+                                for _, linha in baixa_procura.iterrows()
+                            ]
+                            if not baixa_procura.empty
+                            else [
+                                html.Div(
+                                    className="interpretation-empty-state",
+                                    children="Não foram encontrados livros com procura abaixo da média neste momento.",
+                                )
+                            ]
+                        ),
+                    ),
+                ],
+            ),
+            html.Div(
+                className="interpretation-panel",
+                children=[
+                    html.Div(
+                        className="interpretation-panel-header",
+                        children=[
+                            html.H3("Recomendações"),
+                            html.P("Sugestões geradas automaticamente a partir da análise do stock."),
+                        ],
+                    ),
+                    html.Div(
+                        className="interpretation-recommendation-list",
+                        children=[
+                            html.Div(
+                                className="interpretation-recommendation-item",
+                                children=[
+                                    html.Span(
+                                        str(indice),
+                                        className="interpretation-recommendation-number",
+                                    ),
+                                    html.P(recomendacao),
+                                ],
+                            )
+                            for indice, recomendacao in enumerate(
+                                recomendacoes,
+                                start=1,
+                            )
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+def pagina_interpretacao_stock():
+    expirar_reservas()
+    dados = carregar_alertas_stock()
+    stock_completo = carregar_stock_completo()
+
+    return criar_interpretacao_stock(
+        dados,
+        stock_completo,
+    )
+
+
 def pagina_stock():
     expirar_reservas()
     dados = carregar_alertas_stock()
@@ -3240,7 +3728,7 @@ def pagina_stock():
                 className="stock-grid",
                 children=[
                     html.Div(
-                        className="chart-panel",
+                        className="chart-panel stock-chart-panel",
                         children=[
                             html.H3(
                                 "Procura Mensal vs Stock Disponível"
@@ -3250,6 +3738,7 @@ def pagina_stock():
                                 config={
                                     "displayModeBar": False,
                                 },
+                                className="stock-chart-graph",
                             ),
                         ],
                     ),
@@ -3841,6 +4330,7 @@ def alternar_menu_analises(
     Input("btn-catalogo", "n_clicks"),
     Input("btn-previsoes", "n_clicks"),
     Input("btn-stock", "n_clicks"),
+    Input("btn-interpretacao-stock", "n_clicks"),
     Input("btn-exportacoes", "n_clicks"),
     prevent_initial_call=True,
 )
@@ -3852,6 +4342,7 @@ def guardar_pagina_atual(
     catalogo,
     previsoes,
     stock,
+    interpretacao_stock,
     exportacoes,
 ):
     paginas_por_botao = {
@@ -3862,6 +4353,7 @@ def guardar_pagina_atual(
         "btn-catalogo": "catalogo",
         "btn-previsoes": "previsoes",
         "btn-stock": "stock",
+        "btn-interpretacao-stock": "interpretacao-stock",
         "btn-exportacoes": "exportacoes",
     }
 
@@ -3880,6 +4372,7 @@ def guardar_pagina_atual(
     Output("btn-catalogo", "className"),
     Output("btn-previsoes", "className"),
     Output("btn-stock", "className"),
+    Output("btn-interpretacao-stock", "className"),
     Output("btn-exportacoes", "className"),
     Input("current-page-store", "data"),
 )
@@ -3902,6 +4395,7 @@ def navegar(
             submenu_normal,
             submenu_normal,
             submenu_normal,
+            submenu_normal,
         )
 
     if pagina_atual == "reservas":
@@ -3910,6 +4404,7 @@ def navegar(
             visao_normal,
             submenu_normal,
             submenu_ativo,
+            submenu_normal,
             submenu_normal,
             submenu_normal,
             submenu_normal,
@@ -3928,6 +4423,7 @@ def navegar(
             submenu_normal,
             submenu_normal,
             submenu_normal,
+            submenu_normal,
         )
 
     if pagina_atual == "catalogo":
@@ -3938,6 +4434,7 @@ def navegar(
             submenu_normal,
             submenu_normal,
             submenu_ativo,
+            submenu_normal,
             submenu_normal,
             submenu_normal,
             submenu_normal,
@@ -3954,12 +4451,28 @@ def navegar(
             submenu_ativo,
             submenu_normal,
             submenu_normal,
+            submenu_normal,
         )
 
     if pagina_atual == "stock":
         return (
             pagina_stock(),
             visao_normal,
+            submenu_normal,
+            submenu_normal,
+            submenu_normal,
+            submenu_normal,
+            submenu_normal,
+            submenu_ativo,
+            submenu_normal,
+            submenu_normal,
+        )
+
+    if pagina_atual == "interpretacao-stock":
+        return (
+            pagina_interpretacao_stock(),
+            visao_normal,
+            submenu_normal,
             submenu_normal,
             submenu_normal,
             submenu_normal,
@@ -3979,12 +4492,14 @@ def navegar(
             submenu_normal,
             submenu_normal,
             submenu_normal,
+            submenu_normal,
             submenu_ativo,
         )
 
     return (
         pagina_visao_geral(),
         visao_ativo,
+        submenu_normal,
         submenu_normal,
         submenu_normal,
         submenu_normal,
