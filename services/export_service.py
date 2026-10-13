@@ -955,6 +955,20 @@ def abrir_power_bi():
     caminho = encontrar_ficheiro_power_bi()
     if sys.platform.startswith("win"):
         os.startfile(str(caminho))
+        try:
+            from services.powerbi_refresh_service import iniciar_atualizacao_automatica
+
+            iniciar_atualizacao_automatica(
+                caminho_relatorio=caminho,
+                aguardar_modelo=True,
+                motivo="Botão Abrir Power BI do SABIN",
+            )
+        except Exception as erro:
+            print(
+                "[SABIN-PowerBI] Não foi possível agendar a atualização automática:",
+                erro,
+                flush=True,
+            )
     elif sys.platform == "darwin":
         subprocess.Popen(["open", str(caminho)])
     else:

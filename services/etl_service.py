@@ -132,13 +132,33 @@ def _executar_em_background():
     global _versao_atualizacao
 
     while True:
+        sucesso = False
         try:
             executar_atualizacao_analitica()
+            sucesso = True
         except Exception as erro:
             print(
                 "Erro na atualização analítica em segundo plano:",
                 erro,
             )
+
+        # Depois de o ETL terminar com sucesso, pede ao Power BI Desktop
+        # para atualizar o modelo local, caso o relatório já esteja aberto.
+        # A atualização corre num thread separado e não bloqueia o SABIN.
+        if sucesso:
+            try:
+                from services.powerbi_refresh_service import iniciar_atualizacao_automatica
+
+                iniciar_atualizacao_automatica(
+                    aguardar_modelo=False,
+                    motivo="ETL concluído após uma alteração no SABIN",
+                )
+            except Exception as erro:
+                print(
+                    "[SABIN-PowerBI] Não foi possível agendar o refresh após o ETL:",
+                    erro,
+                    flush=True,
+                )
 
         with _estado_lock:
             _versao_atualizacao += 1
@@ -149,7 +169,6 @@ def _executar_em_background():
 
             _atualizacao_em_execucao = False
             break
-
 
 def solicitar_atualizacao_analitica():
     global _atualizacao_em_execucao

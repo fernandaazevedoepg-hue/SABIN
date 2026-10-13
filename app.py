@@ -42,6 +42,7 @@ from services.reservation_service import (
 )
 from services.export_service import (
     abrir_power_bi,
+    encontrar_ficheiro_power_bi,
     gerar_excel,
     gerar_pdf,
 )
@@ -4225,7 +4226,10 @@ def pagina_exportacoes():
             dcc.Download(
                 id="download-pdf"
             ),
-            html.Div(
+            dcc.Download(
+                id="download-powerbi"
+            ),
+                        html.Div(
                 className="export-actions-grid",
                 children=[
                     html.Div(
@@ -4287,7 +4291,9 @@ def pagina_exportacoes():
                                 ],
                             ),
                             html.Button(
-                                "Abrir Power BI",
+                                "Descarregar ficheiro Power BI"
+                                if os.getenv("SABIN_ONLINE") == "1"
+                                else "Abrir Power BI",
                                 id="export-powerbi-button",
                                 className="export-action-button",
                                 n_clicks=0,
@@ -4889,6 +4895,7 @@ def navegar(
 @app.callback(
     Output("download-excel", "data"),
     Output("download-pdf", "data"),
+    Output("download-powerbi", "data"),
     Output("export-message", "children"),
     Input("export-excel-button", "n_clicks"),
     Input("export-pdf-button", "n_clicks"),
@@ -4909,6 +4916,7 @@ def processar_exportacoes(
             return (
                 dcc.send_file(str(caminho)),
                 no_update,
+                no_update,
                 html.Div(
                     "Excel gerado com sucesso.",
                     className="sale-success-message",
@@ -4921,6 +4929,7 @@ def processar_exportacoes(
             return (
                 no_update,
                 dcc.send_file(str(caminho)),
+                no_update,
                 html.Div(
                     "Relatório PDF gerado com sucesso.",
                     className="sale-success-message",
@@ -4928,9 +4937,23 @@ def processar_exportacoes(
             )
 
         if acao == "export-powerbi-button":
+            if os.getenv("SABIN_ONLINE") == "1":
+                caminho = encontrar_ficheiro_power_bi()
+
+                return (
+                    no_update,
+                    no_update,
+                    dcc.send_file(str(caminho)),
+                    html.Div(
+                        "Ficheiro Power BI preparado para descarregar.",
+                        className="sale-success-message",
+                    ),
+                )
+
             caminho = abrir_power_bi()
 
             return (
+                no_update,
                 no_update,
                 no_update,
                 html.Div(
@@ -4940,12 +4963,10 @@ def processar_exportacoes(
             )
 
     except Exception as erro:
-        print(
-            "Erro na área de exportações:",
-            erro,
-        )
+        print("Erro na área de exportações:", erro)
 
         return (
+            no_update,
             no_update,
             no_update,
             html.Div(
@@ -4958,7 +4979,9 @@ def processar_exportacoes(
         no_update,
         no_update,
         no_update,
+        no_update,
     )
+
 
 
 # Quantidade da venda
