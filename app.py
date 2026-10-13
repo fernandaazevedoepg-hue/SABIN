@@ -4318,6 +4318,7 @@ app = Dash(
 )
 
 app.title = "SABIN"
+server = app.server
 
 
 app.layout = html.Div(
