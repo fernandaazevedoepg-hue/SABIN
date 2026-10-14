@@ -31,9 +31,9 @@ GOOGLE_BOOKS_URL = "https://www.googleapis.com/books/v1/volumes"
 OPEN_LIBRARY_BOOKS_URL = "https://openlibrary.org/api/books"
 OPEN_LIBRARY_SEARCH_URL = "https://openlibrary.org/search.json"
 
-TIMEOUT_API = 4
-TIMEOUT_WEB = 4
-TIMEOUT_SEARCH = 5
+TIMEOUT_API = 12
+TIMEOUT_WEB = 12
+TIMEOUT_SEARCH = 15
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -669,7 +669,11 @@ def procurar_google_books(isbn):
                     "printType": "books",
                 },
             )
-        except Exception:
+        except Exception as erro:
+            print(
+                f"[ISBN][Google Books] Erro ao pesquisar "
+                f"{variante}: {type(erro).__name__}: {erro}"
+            )
             continue
 
         for item in dados.get("items") or []:
@@ -1251,22 +1255,31 @@ def pesquisar_ddgs(consulta):
             )
             or []
         )
-    except Exception:
-        try:
-            return (
-                DDGS(
-                    timeout=TIMEOUT_SEARCH
-                ).text(
-                    consulta,
-                    region="pt-pt",
-                    safesearch="moderate",
-                    max_results=8,
-                    backend="auto",
-                )
-                or []
+    except Exception as erro:
+        print(
+            f"[ISBN][DDGS] Pesquisa principal falhou: "
+            f"{type(erro).__name__}: {erro}"
+        )
+
+    try:
+        return (
+            DDGS(
+                timeout=TIMEOUT_SEARCH
+            ).text(
+                consulta,
+                region="pt-pt",
+                safesearch="moderate",
+                max_results=8,
+                backend="auto",
             )
-        except Exception:
-            return []
+            or []
+        )
+    except Exception as erro:
+        print(
+            f"[ISBN][DDGS] Pesquisa alternativa falhou: "
+            f"{type(erro).__name__}: {erro}"
+        )
+        return []
 
 
 def pesquisar_web(isbn, titulo=None, autores=None):

@@ -1,4 +1,9 @@
 venv/
-__pycache__/
 *.pyc
 exports/
+pg_teste/
+sabin_backup.dump
+__pycache__/
+*.py[cod]
+logs/*.log
+*.patch
