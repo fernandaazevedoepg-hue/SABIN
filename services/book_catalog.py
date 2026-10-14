@@ -31,9 +31,9 @@ GOOGLE_BOOKS_URL = "https://www.googleapis.com/books/v1/volumes"
 OPEN_LIBRARY_BOOKS_URL = "https://openlibrary.org/api/books"
 OPEN_LIBRARY_SEARCH_URL = "https://openlibrary.org/search.json"
 
-TIMEOUT_API = 12
-TIMEOUT_WEB = 12
-TIMEOUT_SEARCH = 15
+TIMEOUT_API = 6
+TIMEOUT_WEB = 5
+TIMEOUT_SEARCH = 5
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -49,12 +49,15 @@ session.headers.update(
     }
 )
 
+# Não repetir pedidos quando a API responde 429: isso só aumenta a demora.
+# Mantém uma tentativa de recuperação para falhas transitórias de ligação/servidor.
 retry = Retry(
     total=1,
     connect=1,
-    read=1,
-    backoff_factor=0.2,
-    status_forcelist=[429, 500, 502, 503, 504],
+    read=0,
+    status=0,
+    backoff_factor=0.1,
+    status_forcelist=[500, 502, 503, 504],
     allowed_methods=frozenset(["GET"]),
 )
 
@@ -674,6 +677,11 @@ def procurar_google_books(isbn):
                 f"[ISBN][Google Books] Erro ao pesquisar "
                 f"{variante}: {type(erro).__name__}: {erro}"
             )
+            # Se o Google limitar pedidos (HTTP 429), não tentar outra variante:
+            # a segunda chamada provavelmente será limitada da mesma forma.
+            resposta = getattr(erro, "response", None)
+            if getattr(resposta, "status_code", None) == 429 or "429" in str(erro):
+                break
             continue
 
         for item in dados.get("items") or []:
@@ -1242,173 +1250,83 @@ def extrair_pagina_reader(url, isbn):
 
 
 def pesquisar_ddgs(consulta):
+    """Faz uma pesquisa web com um único backend para evitar esperas duplicadas."""
     try:
         return (
-            DDGS(
-                timeout=TIMEOUT_SEARCH
-            ).text(
+            DDGS(timeout=TIMEOUT_SEARCH).text(
                 consulta,
                 region="pt-pt",
                 safesearch="moderate",
-                max_results=8,
-                backend="google,brave,bing",
-            )
-            or []
-        )
-    except Exception as erro:
-        print(
-            f"[ISBN][DDGS] Pesquisa principal falhou: "
-            f"{type(erro).__name__}: {erro}"
-        )
-
-    try:
-        return (
-            DDGS(
-                timeout=TIMEOUT_SEARCH
-            ).text(
-                consulta,
-                region="pt-pt",
-                safesearch="moderate",
-                max_results=8,
+                max_results=5,
                 backend="auto",
             )
             or []
         )
     except Exception as erro:
         print(
-            f"[ISBN][DDGS] Pesquisa alternativa falhou: "
+            f"[ISBN][DDGS] Pesquisa falhou para {consulta!r}: "
             f"{type(erro).__name__}: {erro}"
         )
         return []
 
 
 def pesquisar_web(isbn, titulo=None, autores=None):
-    autor = (
-        autores[0]
-        if autores
-        else None
-    )
+    """Fallback limitado: poucas pesquisas e poucas páginas para evitar demora."""
+    autor = autores[0] if autores else None
 
-    consultas = [
-        f'"{isbn}"',
-        f'"{isbn}" livro',
-        f'"{isbn}" autor editora',
-    ]
-
+    # Uma consulta exata e, se já houver título, uma consulta contextual.
+    consultas = [f'"{isbn}" livro autor editora']
     if titulo:
         consulta = f'"{titulo}" "{isbn}"'
-
         if autor:
             consulta += f' "{autor}"'
-
         consultas.append(consulta)
 
     resultados = []
-
-    with ThreadPoolExecutor(
-        max_workers=min(4, len(consultas))
-    ) as executor:
-        futuros = [
-            executor.submit(
-                pesquisar_ddgs,
-                consulta,
-            )
-            for consulta in consultas
-        ]
-
+    with ThreadPoolExecutor(max_workers=len(consultas)) as executor:
+        futuros = [executor.submit(pesquisar_ddgs, consulta) for consulta in consultas]
         for futuro in as_completed(futuros):
             try:
-                resultados.extend(
-                    futuro.result()
-                )
-            except Exception:
-                pass
+                resultados.extend(futuro.result())
+            except Exception as erro:
+                print(f"[ISBN][Web] Erro na pesquisa: {type(erro).__name__}: {erro}")
 
     urls = []
     vistos = set()
-
     for resultado in resultados:
-        url = str(
-            resultado.get("href")
-            or resultado.get("url")
-            or ""
-        ).strip()
-
+        url = str(resultado.get("href") or resultado.get("url") or "").strip()
         if not url or url in vistos:
             continue
-
         parsed = urlparse(url)
-
         if parsed.scheme not in ("http", "https"):
             continue
-
         dominio = parsed.netloc.lower()
-
-        if any(
-            bloqueado in dominio
-            for bloqueado in (
-                "google.com",
-                "bing.com",
-                "duckduckgo.com",
-                "facebook.com",
-                "instagram.com",
-                "youtube.com",
-            )
-        ):
+        if any(bloqueado in dominio for bloqueado in (
+            "google.com", "bing.com", "duckduckgo.com", "facebook.com",
+            "instagram.com", "youtube.com",
+        )):
             continue
-
         vistos.add(url)
         urls.append(url)
+        if len(urls) >= 3:
+            break
+
+    if not urls:
+        return []
 
     fontes = []
-
-    with ThreadPoolExecutor(
-        max_workers=min(6, len(urls) or 1)
-    ) as executor:
-        futuros = {
-            executor.submit(
-                extrair_pagina_html,
-                url,
-                isbn,
-            ): url
-            for url in urls[:8]
-        }
-
+    with ThreadPoolExecutor(max_workers=len(urls)) as executor:
+        futuros = [executor.submit(extrair_pagina_html, url, isbn) for url in urls]
         for futuro in as_completed(futuros):
             try:
                 dados = futuro.result()
-            except Exception:
+            except Exception as erro:
+                print(f"[ISBN][Web] Erro ao ler página: {type(erro).__name__}: {erro}")
                 dados = None
-
             if dados:
                 fontes.append(dados)
 
-    if fontes:
-        return fontes
-
-    # Se os sites bloquearam requests normais, tenta o Reader
-    # apenas nos primeiros resultados para não deixar o SABIN lento.
-    with ThreadPoolExecutor(
-        max_workers=min(3, len(urls) or 1)
-    ) as executor:
-        futuros = {
-            executor.submit(
-                extrair_pagina_reader,
-                url,
-                isbn,
-            ): url
-            for url in urls[:3]
-        }
-
-        for futuro in as_completed(futuros):
-            try:
-                dados = futuro.result()
-            except Exception:
-                dados = None
-
-            if dados:
-                fontes.append(dados)
-
+    # Não tenta o Reader externo: essa segunda ronda tornava a pesquisa lenta.
     return fontes
 
 
@@ -1556,18 +1474,18 @@ def procurar_externo_cache(isbn):
         isbn,
     )
 
-    if faltam_campos(combinado):
-        titulo = (
-            combinado.get("titulo")
-            if combinado
-            else None
-        )
+    # A pesquisa web é lenta; só a usa quando faltam dados principais.
+    # Não pesquisa novamente apenas porque faltam data ou géneros.
+    precisa_web = (
+        not combinado
+        or not combinado.get("titulo")
+        or not combinado.get("autores")
+        or not combinado.get("editora")
+    )
 
-        autores = (
-            combinado.get("autores")
-            if combinado
-            else []
-        )
+    if precisa_web:
+        titulo = combinado.get("titulo") if combinado else None
+        autores = combinado.get("autores") if combinado else []
 
         fontes_web = pesquisar_web(
             isbn,
