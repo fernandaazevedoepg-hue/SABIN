@@ -50,14 +50,11 @@ session.headers.update(
 )
 
 retry = Retry(
-    # Não repetir pedidos quando uma API limita o acesso (429).
-    # A pesquisa passa imediatamente para as fontes alternativas.
-    total=0,
-    connect=0,
-    read=0,
-    status=0,
-    backoff_factor=0,
-    status_forcelist=[],
+    total=1,
+    connect=1,
+    read=1,
+    backoff_factor=0.2,
+    status_forcelist=[429, 500, 502, 503, 504],
     allowed_methods=frozenset(["GET"]),
 )
 
@@ -720,7 +717,7 @@ def procurar_google_books(isbn):
     }
 
 
-def procurar_open_library(isbn):
+def _procurar_open_library_legado(isbn):
     isbn = normalizar_isbn(isbn)
     variantes = variantes_isbn(isbn)
 
@@ -741,11 +738,8 @@ def procurar_open_library(isbn):
             )
 
             livro = dados.get(chave) or livro
-        except Exception as erro:
-            print(
-                f"[ISBN][Open Library Books] Erro para {variante}: "
-                f"{type(erro).__name__}: {erro}"
-            )
+        except Exception:
+            pass
 
         try:
             dados = get_json(
@@ -774,11 +768,8 @@ def procurar_open_library(isbn):
                 if set(variantes) & isbns:
                     documento = candidato
                     break
-        except Exception as erro:
-            print(
-                f"[ISBN][Open Library Search] Erro para {variante}: "
-                f"{type(erro).__name__}: {erro}"
-            )
+        except Exception:
+            pass
 
         if livro or documento:
             break
@@ -861,6 +852,97 @@ def procurar_open_library(isbn):
         "generos": mapear_generos(assuntos),
     }
 
+
+
+def procurar_open_library(isbn):
+    """Consulta primeiro o endpoint direto de ISBN da Open Library.
+
+    Mantém a consulta antiga como fallback para não remover comportamento
+    que já existia no SABIN.
+    """
+    isbn = normalizar_isbn(isbn)
+
+    # O endpoint /isbn/{isbn}.json é uma consulta direta por identificador;
+    # não depende dos resultados de pesquisa nem do motor DDGS.
+    for variante in variantes_isbn(isbn):
+        try:
+            registo = get_json(
+                f"https://openlibrary.org/isbn/{variante}.json",
+                {},
+            )
+        except Exception as erro:
+            print(
+                f"[ISBN][Open Library ISBN] {variante}: "
+                f"{type(erro).__name__}: {erro}"
+            )
+            continue
+
+        titulo = registo.get("title")
+        editoras = registo.get("publishers") or []
+        editora = editoras[0] if editoras else None
+        data_publicacao = registo.get("publish_date")
+        autores = []
+        assuntos = []
+
+        # O endpoint ISBN normalmente devolve referências de autores e obras.
+        for entrada in registo.get("authors") or []:
+            chave = entrada.get("key") if isinstance(entrada, dict) else None
+            if not chave:
+                continue
+            try:
+                dados_autor = get_json(f"https://openlibrary.org{chave}.json", {})
+                nome = dados_autor.get("name")
+                if nome:
+                    autores.append(nome)
+            except Exception as erro:
+                print(
+                    f"[ISBN][Open Library autor] {chave}: "
+                    f"{type(erro).__name__}: {erro}"
+                )
+
+        for entrada in registo.get("works") or []:
+            chave = entrada.get("key") if isinstance(entrada, dict) else None
+            if not chave:
+                continue
+            try:
+                obra = get_json(f"https://openlibrary.org{chave}.json", {})
+                titulo = titulo or obra.get("title")
+                assuntos.extend(obra.get("subjects") or [])
+                if not data_publicacao and obra.get("first_publish_date"):
+                    data_publicacao = obra.get("first_publish_date")
+            except Exception as erro:
+                print(
+                    f"[ISBN][Open Library obra] {chave}: "
+                    f"{type(erro).__name__}: {erro}"
+                )
+
+        titulo = limpar_titulo(titulo, isbn, autores)
+        autores = limpar_autores(autores)
+        if titulo:
+            resultado = {
+                "sucesso": True,
+                "origem": "Open Library API",
+                "prioridade": 90,
+                "titulo": titulo,
+                "isbn": isbn,
+                "autores": autores,
+                "editora": limpar_editora(editora),
+                "data_publicacao": normalizar_data(data_publicacao),
+                "generos": mapear_generos(assuntos),
+            }
+            print(
+                "[ISBN][Open Library ISBN] Encontrado: "
+                f"titulo={bool(resultado['titulo'])}, "
+                f"autores={bool(resultado['autores'])}, "
+                f"editora={bool(resultado['editora'])}, "
+                f"data={bool(resultado['data_publicacao'])}, "
+                f"generos={bool(resultado['generos'])}"
+            )
+            return resultado
+
+    # Fallback para os dois endpoints usados pela implementação anterior.
+    print("[ISBN][Open Library ISBN] Endpoint direto sem registo; a usar fallback antigo.")
+    return _procurar_open_library_legado(isbn)
 
 def extrair_json_ld(html, isbn):
     blocos = re.findall(
@@ -1589,17 +1671,6 @@ def procurar_externo_cache(isbn):
         combinado = mesclar_fontes(
             fontes,
             isbn,
-        )
-
-    if not combinado:
-        print(
-            f"[BookCatalog] Nenhuma fonte encontrou dados suficientes "
-            f"para o ISBN {isbn}."
-        )
-    else:
-        print(
-            f"[BookCatalog] Resultado final para {isbn}: "
-            f"{combinado.get('fontes_campos', {})}"
         )
 
     return combinado
