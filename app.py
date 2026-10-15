@@ -7,7 +7,7 @@ from datetime import date, timedelta
 import pandas as pd
 import plotly.graph_objects as go
 
-from flask import Response, request, redirect, session, url_for, render_template_string
+from flask import Response
 
 from dash import (
     Dash,
@@ -4322,131 +4322,10 @@ app.title = "SABIN"
 server = app.server
 
 
-# Autenticação Supabase Auth (ativa também em execução local).
-# Configurar no .env: SUPABASE_URL, SUPABASE_KEY (ou SUPABASE_ANON_KEY), SABIN_SESSION_SECRET e SABIN_ADMIN_EMAIL.
-server.secret_key = os.getenv("SABIN_SESSION_SECRET", "") or os.urandom(32)
-server.config.update(
-    SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true",
-)
-
-LOGIN_HTML = """<!doctype html>
-<html lang="pt-PT"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Entrar | SABIN</title><style>
-*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f1f5f9;font-family:Arial,sans-serif;color:#172033}
-.card{width:min(420px,calc(100% - 32px));background:#fff;padding:34px;border-radius:16px;box-shadow:0 12px 40px #17203316}
-h1{margin:0;color:#24345b;font-size:32px}p{color:#64748b;line-height:1.5}.field{display:block;margin:18px 0 6px;font-weight:600;font-size:14px}
-input{width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:8px;font-size:15px}button{width:100%;margin-top:22px;padding:13px;border:0;border-radius:8px;background:#4055e8;color:white;font-weight:700;font-size:15px;cursor:pointer}
-.error{padding:10px;border-radius:8px;background:#fff1f2;color:#be123c;font-size:14px}.foot{font-size:12px;text-align:center;margin-top:18px}</style></head>
-<body><main class="card"><h1>SABIN</h1><p>Business Intelligence<br>Inicia sessão para aceder ao sistema.</p>
-{% if erro %}<div class="error">{{ erro }}</div>{% endif %}
-<form method="post" action="/login"><label class="field" for="username">Utilizador</label><input id="username" name="username" type="text" autocomplete="username" placeholder="admin" required>
-<label class="field" for="password">Palavra-passe</label><input id="password" name="password" type="password" autocomplete="current-password" required>
-<button type="submit">Iniciar sessão</button></form><div class="foot">Acesso reservado a utilizadores autorizados.</div></main></body></html>"""
-
-
-def _supabase_auth_configurado():
-    chave = os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_ANON_KEY")
-    return bool(os.getenv("SUPABASE_URL") and chave and os.getenv("SABIN_ADMIN_EMAIL"))
-
-
-@server.route("/login", methods=["GET", "POST"])
-def pagina_login():
-    if session.get("sabin_user"):
-        return redirect("/")
-
-    erro = None
-    if request.method == "POST":
-        username = (request.form.get("username") or "").strip()
-        password = request.form.get("password") or ""
-        email_admin = (os.getenv("SABIN_ADMIN_EMAIL") or "").strip()
-        # O nome curto "admin" é um alias para a conta real criada no Supabase.
-        # Os restantes utilizadores podem entrar com o seu email do Supabase.
-        email = email_admin if username.casefold() == "admin" else username
-        if not _supabase_auth_configurado():
-            erro = "Configura SUPABASE_URL, SUPABASE_KEY e SABIN_ADMIN_EMAIL no ficheiro .env."
-        elif not username or not password:
-            erro = "Preenche o utilizador e a palavra-passe."
-        elif "@" not in email:
-            erro = "Utilizador inválido. Usa admin ou o email da tua conta autorizada."
-        else:
-            try:
-                from supabase import create_client
-                cliente = create_client(
-                    os.environ["SUPABASE_URL"].rstrip("/" ).removesuffix("/rest/v1"),
-                    os.getenv("SUPABASE_KEY") or os.environ["SUPABASE_ANON_KEY"],
-                )
-                resposta = cliente.auth.sign_in_with_password({
-                    "email": email,
-                    "password": password,
-                })
-                utilizador = getattr(resposta, "user", None)
-                if not utilizador:
-                    erro = "Não foi possível iniciar sessão. Confirma as credenciais."
-                else:
-                    session.clear()
-                    session["sabin_user"] = {
-                        "id": utilizador.id,
-                        "email": utilizador.email or email,
-                    }
-                    return redirect("/")
-            except Exception:
-                # Não expor detalhes internos nem credenciais no ecrã de login.
-                erro = "Não foi possível iniciar sessão. Verifica as credenciais e a configuração do Supabase."
-
-    return render_template_string(LOGIN_HTML, erro=erro)
-
-
-@server.route("/logout", methods=["GET", "POST"])
-def terminar_sessao():
-    session.clear()
-    return redirect("/login")
-
-
-@server.before_request
-def proteger_sabin():
-    caminho = request.path or "/"
-    caminhos_publicos = ("/login", "/logout", "/favicon.ico", "/assets/")
-    if caminho.startswith(caminhos_publicos):
-        return None
-    if not session.get("sabin_user"):
-        return redirect(url_for("pagina_login"))
-    return None
-
-
 app.layout = html.Div(
     className="app",
     children=[
         criar_sidebar(),
-        html.Div(
-            style={
-                "position": "fixed",
-                "top": "12px",
-                "right": "20px",
-                "zIndex": 2000,
-                "display": "flex",
-                "alignItems": "center",
-                "gap": "12px",
-                "padding": "8px 12px",
-                "background": "rgba(255,255,255,0.96)",
-                "border": "1px solid #e2e8f0",
-                "borderRadius": "10px",
-                "fontSize": "12px",
-                "boxShadow": "0 2px 8px rgba(15,23,42,0.08)",
-            },
-            children=[
-                html.Span(
-                    "Sessão autenticada",
-                    style={"color": "#475569"},
-                ),
-                html.A(
-                    "Terminar sessão",
-                    href="/logout",
-                    style={"color": "#4055e8", "fontWeight": "700", "textDecoration": "none"},
-                ),
-            ],
-        ),
         dcc.Store(
             id="current-page-store",
             storage_type="local",
