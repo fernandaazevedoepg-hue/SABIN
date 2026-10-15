@@ -3,7 +3,6 @@ import os
 import re
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from functools import lru_cache
 from html import unescape
 from urllib.parse import urlparse
 
@@ -31,9 +30,9 @@ GOOGLE_BOOKS_URL = "https://www.googleapis.com/books/v1/volumes"
 OPEN_LIBRARY_BOOKS_URL = "https://openlibrary.org/api/books"
 OPEN_LIBRARY_SEARCH_URL = "https://openlibrary.org/search.json"
 
-TIMEOUT_API = 4
-TIMEOUT_WEB = 4
-TIMEOUT_SEARCH = 5
+TIMEOUT_API = 12
+TIMEOUT_WEB = 12
+TIMEOUT_SEARCH = 15
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -669,7 +668,11 @@ def procurar_google_books(isbn):
                     "printType": "books",
                 },
             )
-        except Exception:
+        except Exception as erro:
+            print(
+                f"[ISBN][Google Books] Erro ao pesquisar "
+                f"{variante}: {type(erro).__name__}: {erro}"
+            )
             continue
 
         for item in dados.get("items") or []:
@@ -713,7 +716,7 @@ def procurar_google_books(isbn):
     }
 
 
-def procurar_open_library(isbn):
+def _procurar_open_library_legado(isbn):
     isbn = normalizar_isbn(isbn)
     variantes = variantes_isbn(isbn)
 
@@ -733,24 +736,7 @@ def procurar_open_library(isbn):
                 },
             )
 
-            candidato_livro = dados.get(chave)
-            if candidato_livro:
-                # Só aceitar o registo se os identificadores confirmarem
-                # o ISBN pesquisado; o endpoint bibkeys pode devolver dados
-                # incompletos ou associados a outra edição.
-                identificadores = candidato_livro.get("identifiers") or {}
-                isbn_detalhe = set()
-                if isinstance(identificadores, dict):
-                    isbn_detalhe.update(
-                        normalizar_isbn(valor)
-                        for valor in (
-                            (identificadores.get("isbn_10") or [])
-                            + (identificadores.get("isbn_13") or [])
-                        )
-                        if valor
-                    )
-                if set(variantes) & isbn_detalhe:
-                    livro = candidato_livro
+            livro = dados.get(chave) or livro
         except Exception:
             pass
 
@@ -865,6 +851,97 @@ def procurar_open_library(isbn):
         "generos": mapear_generos(assuntos),
     }
 
+
+
+def procurar_open_library(isbn):
+    """Consulta primeiro o endpoint direto de ISBN da Open Library.
+
+    Mantém a consulta antiga como fallback para não remover comportamento
+    que já existia no SABIN.
+    """
+    isbn = normalizar_isbn(isbn)
+
+    # O endpoint /isbn/{isbn}.json é uma consulta direta por identificador;
+    # não depende dos resultados de pesquisa nem do motor DDGS.
+    for variante in variantes_isbn(isbn):
+        try:
+            registo = get_json(
+                f"https://openlibrary.org/isbn/{variante}.json",
+                {},
+            )
+        except Exception as erro:
+            print(
+                f"[ISBN][Open Library ISBN] {variante}: "
+                f"{type(erro).__name__}: {erro}"
+            )
+            continue
+
+        titulo = registo.get("title")
+        editoras = registo.get("publishers") or []
+        editora = editoras[0] if editoras else None
+        data_publicacao = registo.get("publish_date")
+        autores = []
+        assuntos = []
+
+        # O endpoint ISBN normalmente devolve referências de autores e obras.
+        for entrada in registo.get("authors") or []:
+            chave = entrada.get("key") if isinstance(entrada, dict) else None
+            if not chave:
+                continue
+            try:
+                dados_autor = get_json(f"https://openlibrary.org{chave}.json", {})
+                nome = dados_autor.get("name")
+                if nome:
+                    autores.append(nome)
+            except Exception as erro:
+                print(
+                    f"[ISBN][Open Library autor] {chave}: "
+                    f"{type(erro).__name__}: {erro}"
+                )
+
+        for entrada in registo.get("works") or []:
+            chave = entrada.get("key") if isinstance(entrada, dict) else None
+            if not chave:
+                continue
+            try:
+                obra = get_json(f"https://openlibrary.org{chave}.json", {})
+                titulo = titulo or obra.get("title")
+                assuntos.extend(obra.get("subjects") or [])
+                if not data_publicacao and obra.get("first_publish_date"):
+                    data_publicacao = obra.get("first_publish_date")
+            except Exception as erro:
+                print(
+                    f"[ISBN][Open Library obra] {chave}: "
+                    f"{type(erro).__name__}: {erro}"
+                )
+
+        titulo = limpar_titulo(titulo, isbn, autores)
+        autores = limpar_autores(autores)
+        if titulo:
+            resultado = {
+                "sucesso": True,
+                "origem": "Open Library API",
+                "prioridade": 90,
+                "titulo": titulo,
+                "isbn": isbn,
+                "autores": autores,
+                "editora": limpar_editora(editora),
+                "data_publicacao": normalizar_data(data_publicacao),
+                "generos": mapear_generos(assuntos),
+            }
+            print(
+                "[ISBN][Open Library ISBN] Encontrado: "
+                f"titulo={bool(resultado['titulo'])}, "
+                f"autores={bool(resultado['autores'])}, "
+                f"editora={bool(resultado['editora'])}, "
+                f"data={bool(resultado['data_publicacao'])}, "
+                f"generos={bool(resultado['generos'])}"
+            )
+            return resultado
+
+    # Fallback para os dois endpoints usados pela implementação anterior.
+    print("[ISBN][Open Library ISBN] Endpoint direto sem registo; a usar fallback antigo.")
+    return _procurar_open_library_legado(isbn)
 
 def extrair_json_ld(html, isbn):
     blocos = re.findall(
@@ -1268,22 +1345,31 @@ def pesquisar_ddgs(consulta):
             )
             or []
         )
-    except Exception:
-        try:
-            return (
-                DDGS(
-                    timeout=TIMEOUT_SEARCH
-                ).text(
-                    consulta,
-                    region="pt-pt",
-                    safesearch="moderate",
-                    max_results=8,
-                    backend="auto",
-                )
-                or []
+    except Exception as erro:
+        print(
+            f"[ISBN][DDGS] Pesquisa principal falhou: "
+            f"{type(erro).__name__}: {erro}"
+        )
+
+    try:
+        return (
+            DDGS(
+                timeout=TIMEOUT_SEARCH
+            ).text(
+                consulta,
+                region="pt-pt",
+                safesearch="moderate",
+                max_results=8,
+                backend="auto",
             )
-        except Exception:
-            return []
+            or []
+        )
+    except Exception as erro:
+        print(
+            f"[ISBN][DDGS] Pesquisa alternativa falhou: "
+            f"{type(erro).__name__}: {erro}"
+        )
+        return []
 
 
 def pesquisar_web(isbn, titulo=None, autores=None):
@@ -1530,8 +1616,20 @@ def faltam_campos(resultado):
     )
 
 
-@lru_cache(maxsize=128)
+# Cache apenas de resultados encontrados. Não guardar falhas temporárias (429,
+# timeout, bloqueios de rede), porque isso faria o mesmo ISBN continuar a falhar
+# durante toda a vida do processo no Render.
+_CACHE_EXTERNO = {}
+_CACHE_EXTERNO_MAX = 128
+
+
 def procurar_externo_cache(isbn):
+    isbn = normalizar_isbn(isbn)
+
+    if isbn in _CACHE_EXTERNO:
+        print(f"[ISBN][Cache] Resultado externo reutilizado para {isbn}.")
+        return _CACHE_EXTERNO[isbn]
+
     fontes = []
 
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -1585,6 +1683,13 @@ def procurar_externo_cache(isbn):
             fontes,
             isbn,
         )
+
+    # Só guardar resultados positivos. Se todas as fontes falharem agora,
+    # a próxima tentativa poderá voltar a consultar as APIs.
+    if combinado and combinado.get("sucesso") and combinado.get("titulo"):
+        if len(_CACHE_EXTERNO) >= _CACHE_EXTERNO_MAX:
+            _CACHE_EXTERNO.pop(next(iter(_CACHE_EXTERNO)))
+        _CACHE_EXTERNO[isbn] = combinado
 
     return combinado
 
