@@ -2020,7 +2020,7 @@ def pagina_registar_venda():
 def criar_tabela_movimentos_stock(movimentos):
     if not movimentos:
         return html.Div(
-            "Ainda não existem movimentos de stock para este livro.",
+            "Ainda não existem movimentos de stock registados.",
             className="empty-cart",
         )
 
@@ -2035,6 +2035,7 @@ def criar_tabela_movimentos_stock(movimentos):
             html.Tr(
                 children=[
                     html.Td(data),
+                    html.Td(movimento["titulo"]),
                     html.Td(movimento["tipo"]),
                     html.Td(str(movimento["quantidade"])),
                     html.Td(
@@ -2052,9 +2053,10 @@ def criar_tabela_movimentos_stock(movimentos):
                 html.Tr(
                     children=[
                         html.Th("Data"),
+                        html.Th("Livro"),
                         html.Th("Tipo"),
                         html.Th("Qtd."),
-                        html.Th("Stock"),
+                        html.Th("Stock anterior → novo"),
                         html.Th("Origem"),
                     ]
                 )
@@ -2067,7 +2069,7 @@ def criar_tabela_movimentos_stock(movimentos):
 def criar_tabela_historico_precos(historico):
     if not historico:
         return html.Div(
-            "Ainda não existem alterações de preço para este livro.",
+            "Ainda não existem alterações de preço registadas.",
             className="empty-cart",
         )
 
@@ -2082,6 +2084,7 @@ def criar_tabela_historico_precos(historico):
             html.Tr(
                 children=[
                     html.Td(data),
+                    html.Td(registo["titulo"]),
                     html.Td(
                         formatar_euro(
                             registo["preco_anterior"]
@@ -2103,6 +2106,7 @@ def criar_tabela_historico_precos(historico):
                 html.Tr(
                     children=[
                         html.Th("Data"),
+                        html.Th("Livro"),
                         html.Th("Preço anterior"),
                         html.Th("Novo preço"),
                     ]
@@ -2111,7 +2115,6 @@ def criar_tabela_historico_precos(historico):
             html.Tbody(linhas),
         ],
     )
-
 
 def pagina_gestao_catalogo():
     livros = carregar_livros_gestao()
@@ -2545,11 +2548,11 @@ def pagina_gestao_catalogo():
                     html.Div(
                         className="sale-form-panel",
                         children=[
-                            html.H3("Movimentos de Stock"),
+                            html.H3("Últimos Movimentos de Stock"),
                             html.Div(
                                 id="management-stock-history",
                                 children=html.Div(
-                                    "Seleciona um livro para consultar o histórico.",
+                                    "A carregar movimentos recentes do catálogo...",
                                     className="empty-cart",
                                 ),
                             ),
@@ -2558,11 +2561,11 @@ def pagina_gestao_catalogo():
                     html.Div(
                         className="sale-form-panel",
                         children=[
-                            html.H3("Histórico de Preços"),
+                            html.H3("Últimas Alterações de Preço"),
                             html.Div(
                                 id="management-price-history",
                                 children=html.Div(
-                                    "Seleciona um livro para consultar o histórico.",
+                                    "A carregar alterações recentes do catálogo...",
                                     className="empty-cart",
                                 ),
                             ),
@@ -5472,21 +5475,25 @@ def atualizar_gestao_catalogo(
     refresh,
     edit_refresh,
 ):
+    # Os históricos são gerais e independentes do livro selecionado.
+    movimentos = consultar_movimentos_stock(
+        limite=10,
+    )
+    historico = consultar_historico_precos(
+        limite=10,
+    )
+    tabela_movimentos = criar_tabela_movimentos_stock(
+        movimentos
+    )
+    tabela_precos = criar_tabela_historico_precos(
+        historico
+    )
+
     if not livro_id:
-        vazio_stock = html.Div(
-            "Seleciona um livro para consultar o histórico.",
-            className="empty-cart",
-        )
-
-        vazio_preco = html.Div(
-            "Seleciona um livro para consultar o histórico.",
-            className="empty-cart",
-        )
-
         return (
             "",
-            vazio_stock,
-            vazio_preco,
+            tabela_movimentos,
+            tabela_precos,
         )
 
     livro = obter_livro_gestao(
@@ -5501,8 +5508,8 @@ def atualizar_gestao_catalogo(
 
         return (
             erro,
-            "",
-            "",
+            tabela_movimentos,
+            tabela_precos,
         )
 
     info = html.Div(
@@ -5567,24 +5574,10 @@ def atualizar_gestao_catalogo(
         ]
     )
 
-    movimentos = consultar_movimentos_stock(
-        livro_id,
-        limite=10,
-    )
-
-    historico = consultar_historico_precos(
-        livro_id,
-        limite=10,
-    )
-
     return (
         info,
-        criar_tabela_movimentos_stock(
-            movimentos
-        ),
-        criar_tabela_historico_precos(
-            historico
-        ),
+        tabela_movimentos,
+        tabela_precos,
     )
 
 
