@@ -2,6 +2,7 @@ import requests
 
 
 def limpar_isbn(isbn):
+    """Remove espaços e hífenes do ISBN."""
     # Remove espaços e hífenes
     return isbn.replace("-", "").replace(" ", "").strip()
 
@@ -53,6 +54,7 @@ def isbn_valido(isbn):
 
 
 def obter_nome_autor(chave_autor):
+    """Consulta a API para obter o nome de um autor."""
     # Consulta os dados de um autor
     url = f"https://openlibrary.org{chave_autor}.json"
 
@@ -76,6 +78,7 @@ def obter_nome_autor(chave_autor):
 
 
 def procurar_livro_por_isbn(isbn):
+    """Consulta a API de livros e organiza os dados encontrados."""
     # Prepara e valida o ISBN
     isbn = limpar_isbn(isbn)
 
@@ -141,6 +144,7 @@ def procurar_livro_por_isbn(isbn):
 
 
 def mostrar_livro(livro):
+    """Apresenta os dados do livro no terminal."""
     # Mostra erro caso a pesquisa falhe
     if not livro["sucesso"]:
         print(livro["erro"])
