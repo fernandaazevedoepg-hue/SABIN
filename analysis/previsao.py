@@ -44,6 +44,7 @@ FEATURES = [
 
 
 def carregar_receita_mensal():
+    """Carrega a receita mensal real a partir do Data Warehouse."""
     query = text("""
         SELECT
             DATE_TRUNC(
@@ -100,6 +101,7 @@ def carregar_receita_mensal():
 
 
 def criar_features(df):
+    """Prepara as variáveis usadas pelo modelo de previsão."""
     dados = df.copy()
 
     dados["ordem"] = np.arange(
@@ -155,6 +157,7 @@ def criar_features(df):
 
 
 def criar_modelo():
+    """Cria o modelo de regressão utilizado para prever a receita."""
     return Pipeline(
         [
             (
@@ -174,6 +177,7 @@ def criar_modelo():
 def avaliar_modelo(
     dados_modelo
 ):
+    """Avalia a qualidade do modelo com métricas de erro e ajuste."""
     meses_teste = 6
 
     if len(dados_modelo) <= meses_teste:
@@ -232,6 +236,7 @@ def prever_proximos_meses(
     dados_modelo,
     quantidade=3,
 ):
+    """Gera previsões de receita para os meses seguintes."""
     modelo = criar_modelo()
 
     modelo.fit(
@@ -358,6 +363,7 @@ def preparar_dados_powerbi(
     df,
     previsoes,
 ):
+    """Organiza os resultados no formato usado pelos relatórios."""
     historico = df.copy()
 
     historico[
@@ -436,6 +442,7 @@ def guardar_resultados(
     r2,
     df,
 ):
+    """Guarda previsões e métricas para consulta posterior."""
     os.makedirs(
         "outputs",
         exist_ok=True,
