@@ -4,7 +4,7 @@ from extract import extrair_tabela
 
 
 def transformar_dim_cliente(clientes):
-    # Cria a dimensão cliente
+    """Prepara os dados dos clientes para a dimensão correspondente."""
     dim_cliente = clientes[
         [
             "id",
@@ -23,7 +23,7 @@ def transformar_dim_cliente(clientes):
 
 
 def transformar_dim_livro(livros):
-    # Cria a dimensão livro
+    """Seleciona os atributos dos livros usados na análise."""
     dim_livro = livros[
         [
             "id",
@@ -44,7 +44,7 @@ def transformar_dim_livro(livros):
 
 
 def transformar_dim_pagamento(vendas):
-    # Cria a dimensão pagamento
+    """Cria a lista de métodos de pagamento sem duplicados."""
     dim_pagamento = (
         vendas[["metodo_pagamento"]]
         .drop_duplicates()
@@ -56,7 +56,7 @@ def transformar_dim_pagamento(vendas):
 
 
 def transformar_dim_data(vendas):
-    # Cria a dimensão data
+    """Cria a dimensão calendário a partir das datas das vendas."""
     datas = vendas["data_venda"].dt.date.unique()
 
     dim_data = pd.DataFrame(
@@ -135,7 +135,7 @@ def transformar_dim_data(vendas):
 
 
 def transformar_dim_autor(autores):
-    # Cria a dimensão autor
+    """Prepara os atributos dos autores para o modelo dimensional."""
     dim_autor = autores[
         [
             "id",
@@ -155,7 +155,7 @@ def transformar_dim_autor(autores):
 
 
 def transformar_dim_genero(generos):
-    # Cria a dimensão género
+    """Prepara os géneros para a dimensão correspondente."""
     dim_genero = generos[
         [
             "id",
@@ -181,6 +181,11 @@ def transformar_fact_vendas(
     dim_pagamento,
     dim_data,
 ):
+    """Relaciona itens de venda com as chaves das dimensões.
+
+    Apenas vendas concluídas são incluídas. A função interrompe a carga
+    se algum livro, pagamento ou data não tiver correspondência.
+    """
     # Mantém apenas vendas concluídas
     vendas_concluidas = vendas[
         vendas["status"] == "Concluída"
@@ -333,6 +338,7 @@ def transformar_bridge_livro_autor(
     dim_livro,
     dim_autor,
 ):
+    """Relaciona cada livro com os autores através das chaves dimensionais."""
     # Liga os IDs originais às chaves do Data Warehouse
     bridge = livro_autores.merge(
         dim_livro[
@@ -386,6 +392,7 @@ def transformar_bridge_livro_genero(
     dim_livro,
     dim_genero,
 ):
+    """Relaciona cada livro com os géneros através das chaves dimensionais."""
     # Liga os IDs originais às chaves do Data Warehouse
     bridge = livro_generos.merge(
         dim_livro[
@@ -436,19 +443,19 @@ def transformar_bridge_livro_genero(
 def main():
     print("SABIN - ETL | TRANSFORMAÇÃO")
 
-    # Extrair dados da base operacional
+    # Lê os dados necessários à transformação.
     vendas = extrair_tabela("vendas")
     livros = extrair_tabela("livros")
     clientes = extrair_tabela("clientes")
     autores = extrair_tabela("autores")
     generos = extrair_tabela("generos")
 
-    # Apenas vendas concluídas entram nas dimensões analíticas
+    # Considera apenas vendas concluídas nas análises.
     vendas = vendas[
         vendas["status"] == "Concluída"
     ].copy()
 
-    # Transformar os dados
+    # Prepara as dimensões a partir dos dados operacionais.
     dim_cliente = transformar_dim_cliente(clientes)
     dim_livro = transformar_dim_livro(livros)
     dim_pagamento = transformar_dim_pagamento(vendas)
@@ -456,7 +463,7 @@ def main():
     dim_autor = transformar_dim_autor(autores)
     dim_genero = transformar_dim_genero(generos)
 
-    # Mostrar os resultados
+    # Apresenta a quantidade de registos preparada em cada dimensão.
     print(f"dim_cliente   -> {len(dim_cliente)} linha(s)")
     print(f"dim_livro     -> {len(dim_livro)} linha(s)")
     print(f"dim_pagamento -> {len(dim_pagamento)} linha(s)")
