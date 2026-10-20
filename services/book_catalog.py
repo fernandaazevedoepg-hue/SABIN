@@ -2,6 +2,7 @@ import json
 import os
 import re
 import unicodedata
+from datetime import date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from html import unescape
 from urllib.parse import urlparse
@@ -464,64 +465,60 @@ def limpar_titulo(titulo, isbn=None, autores=None):
 
 
 def normalizar_data(valor):
+    """Normaliza datas de publicação e rejeita datas de calendário inválidas."""
     if not valor:
         return None
 
-    original = limpar_texto(valor)
-    normalizado = normalizar_texto(original)
+    normalizado = normalizar_texto(valor)
+
+    def data_valida(ano, mes=1, dia=1):
+        try:
+            return date(int(ano), int(mes), int(dia)).isoformat()
+        except (TypeError, ValueError):
+            return None
 
     encontrado = re.search(
         r"\b(19\d{2}|20\d{2})[-/.](0?[1-9]|1[0-2])(?:[-/.](0?[1-9]|[12]\d|3[01]))?\b",
         normalizado,
     )
-
     if encontrado:
-        ano = int(encontrado.group(1))
-        mes = int(encontrado.group(2))
-        dia = int(encontrado.group(3) or 1)
-        return f"{ano:04d}-{mes:02d}-{dia:02d}"
+        return data_valida(
+            encontrado.group(1),
+            encontrado.group(2),
+            encontrado.group(3) or 1,
+        )
 
     encontrado = re.search(
         r"\b(0?[1-9]|[12]\d|3[01])[-/.](0?[1-9]|1[0-2])[-/.](19\d{2}|20\d{2})\b",
         normalizado,
     )
-
     if encontrado:
-        dia = int(encontrado.group(1))
-        mes = int(encontrado.group(2))
-        ano = int(encontrado.group(3))
-        return f"{ano:04d}-{mes:02d}-{dia:02d}"
+        return data_valida(
+            encontrado.group(3),
+            encontrado.group(2),
+            encontrado.group(1),
+        )
 
     encontrado = re.search(
         r"\b(0?[1-9]|1[0-2])[-/.](19\d{2}|20\d{2})\b",
         normalizado,
     )
-
     if encontrado:
-        mes = int(encontrado.group(1))
-        ano = int(encontrado.group(2))
-        return f"{ano:04d}-{mes:02d}-01"
+        return data_valida(encontrado.group(2), encontrado.group(1))
 
     for nome_mes, numero_mes in MESES.items():
         encontrado = re.search(
             rf"\b{re.escape(nome_mes)}\b(?:\s+(?:de|of))?\s+(19\d{{2}}|20\d{{2}})\b",
             normalizado,
         )
-
         if encontrado:
-            ano = int(encontrado.group(1))
-            return f"{ano:04d}-{numero_mes:02d}-01"
+            return data_valida(encontrado.group(1), numero_mes)
 
-    encontrado = re.search(
-        r"\b(19\d{2}|20\d{2})\b",
-        normalizado,
-    )
-
+    encontrado = re.search(r"\b(19\d{2}|20\d{2})\b", normalizado)
     if encontrado:
-        return f"{int(encontrado.group(1)):04d}-01-01"
+        return data_valida(encontrado.group(1))
 
     return None
-
 
 def mapear_generos(valores):
     texto = " | ".join(
@@ -569,9 +566,8 @@ def procurar_livro_local(isbn):
             l.qtd_reservada,
             COALESCE(
                 (
-                    SELECT STRING_AGG(
-                        a.nome,
-                        ', '
+                    SELECT ARRAY_AGG(
+                        a.nome
                         ORDER BY a.nome
                     )
                     FROM public.livro_autores la
@@ -579,7 +575,7 @@ def procurar_livro_local(isbn):
                         ON a.id = la.autor_id
                     WHERE la.livro_id = l.id
                 ),
-                ''
+                ARRAY[]::varchar[]
             ) AS autores,
             COALESCE(
                 (
@@ -617,11 +613,7 @@ def procurar_livro_local(isbn):
     if not resultado:
         return None
 
-    autores = [
-        parte.strip()
-        for parte in str(resultado["autores"] or "").split(",")
-        if parte.strip()
-    ]
+    autores = list(resultado["autores"] or [])
 
     return {
         "sucesso": True,
@@ -1002,7 +994,7 @@ def extrair_json_ld(html, isbn):
                 or ""
             )
 
-            if isbn_objeto and isbn_objeto != isbn:
+            if isbn_objeto and not (set(variantes_isbn(isbn_objeto)) & set(variantes_isbn(isbn))):
                 continue
 
             def nomes(valor):
