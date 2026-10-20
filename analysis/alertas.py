@@ -33,6 +33,7 @@ COLUNAS_ALERTAS = [
 
 
 def carregar_metricas():
+    """Carrega as métricas usadas para avaliar as previsões."""
     query = text("""
         SELECT *
         FROM dw.metricas_previsao;
@@ -54,6 +55,7 @@ def carregar_metricas():
 
 
 def carregar_previsoes():
+    """Carrega a série de receitas previstas para análise."""
     query = text("""
         SELECT
             mes,
@@ -89,6 +91,7 @@ def gerar_alertas(
     metricas,
     previsoes,
 ):
+    """Gera alertas a partir da variação da receita e da qualidade do modelo."""
     alertas = []
 
     ultima_receita = float(
@@ -285,6 +288,7 @@ def gerar_alertas(
 def guardar_alertas(
     alertas
 ):
+    """Guarda os alertas em CSV e na tabela correspondente do Data Warehouse."""
     os.makedirs(
         "outputs",
         exist_ok=True,
