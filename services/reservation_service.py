@@ -24,6 +24,7 @@ engine = create_engine(
 
 
 def expirar_reservas():
+    """Atualiza o estado das reservas que ultrapassaram o prazo definido."""
     with engine.begin() as connection:
         connection.execute(
             text("""
@@ -36,6 +37,7 @@ def expirar_reservas():
 
 
 def carregar_clientes_reserva():
+    """Carrega os clientes disponíveis para uma reserva."""
     query = text("""
         SELECT
             id,
@@ -56,6 +58,7 @@ def carregar_clientes_reserva():
 
 
 def carregar_livros_reserva():
+    """Carrega os livros que podem ser reservados."""
     query = text("""
         SELECT
             id,
@@ -82,6 +85,7 @@ def carregar_livros_reserva():
 
 
 def carregar_reservas():
+    """Consulta as reservas registadas."""
     expirar_reservas()
 
     query = text("""
@@ -123,6 +127,7 @@ def criar_reserva(
     quantidade,
     data_limite,
 ):
+    """Valida os dados e regista uma nova reserva."""
     if not cliente_id:
         raise ValueError(
             "Seleciona um cliente."
@@ -257,6 +262,7 @@ def atualizar_status_reserva(
     reserva_id,
     novo_status,
 ):
+    """Atualiza o estado de uma reserva segundo as regras do sistema."""
     if novo_status not in {
         "Concluída",
         "Cancelada",
@@ -317,6 +323,7 @@ def concluir_reserva_com_venda(
     reserva_id,
     metodo_pagamento,
 ):
+    """Conclui uma reserva e regista a venda correspondente."""
     if not reserva_id:
         raise ValueError(
             "Seleciona uma reserva pendente."
