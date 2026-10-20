@@ -27,6 +27,7 @@ def adicionar_cliente(
     telemovel=None,
     email=None,
 ):
+    """Valida os dados e regista um novo cliente."""
     nome_completo = (
         str(nome_completo).strip()
         if nome_completo is not None
