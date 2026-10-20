@@ -39,11 +39,13 @@ FORMATO_EUROS = '#,##0.00 "€"'
 
 
 def ler_df(sql):
+    """Executa uma consulta SQL e devolve os resultados num DataFrame."""
     with engine.connect() as connection:
         return pd.read_sql(text(sql), connection)
 
 
 def carregar_kpis():
+    """Carrega os indicadores usados nos relatórios exportados."""
     linha = ler_df("""
         SELECT
             COALESCE(SUM(iv.subtotal), 0) AS receita_total,
@@ -66,6 +68,7 @@ def carregar_kpis():
 
 
 def carregar_metricas():
+    """Carrega as métricas do modelo de previsão."""
     try:
         dados = ler_df("SELECT * FROM dw.metricas_previsao LIMIT 1;")
         if dados.empty:
@@ -82,6 +85,7 @@ def carregar_metricas():
 
 
 def carregar_vendas():
+    """Carrega os dados de vendas para exportação."""
     return ler_df("""
         SELECT
             v.data_venda AS data,
@@ -104,6 +108,7 @@ def carregar_vendas():
 
 
 def carregar_livros():
+    """Carrega os dados dos livros para exportação."""
     return ler_df("""
         SELECT
             l.id,
@@ -133,6 +138,7 @@ def carregar_livros():
 
 
 def carregar_clientes():
+    """Carrega os dados dos clientes para exportação."""
     return ler_df("""
         SELECT
             c.id,
@@ -162,6 +168,7 @@ def carregar_clientes():
 
 
 def carregar_stock():
+    """Carrega os dados de stock para exportação."""
     return ler_df("""
         SELECT
             titulo,
@@ -188,6 +195,7 @@ def carregar_stock():
 
 
 def carregar_previsoes():
+    """Carrega as previsões de receita para exportação."""
     return ler_df("""
         SELECT mes, receita_real, receita_prevista, tipo
         FROM dw.previsao_receita
@@ -196,6 +204,7 @@ def carregar_previsoes():
 
 
 def dados_exportacao():
+    """Reúne os dados necessários para gerar os ficheiros de exportação."""
     return {
         "kpis": carregar_kpis(),
         "metricas": carregar_metricas(),
@@ -386,6 +395,7 @@ def criar_folha_dados(workbook, nome, dataframe, mapa, titulo, descricao):
 
 
 def gerar_excel():
+    """Cria um ficheiro Excel com indicadores, tabelas e dados de apoio."""
     EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
     dados = dados_exportacao()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -504,6 +514,7 @@ def rodape_pdf(canvas, documento):
 
 
 def gerar_pdf():
+    """Cria um relatório PDF com os principais resultados do SABIN."""
     import math
     from html import escape
 
@@ -920,6 +931,7 @@ def gerar_pdf():
 
 
 def encontrar_ficheiro_power_bi():
+    """Localiza o ficheiro Power BI usado pela aplicação."""
     caminho_env = os.getenv("POWER_BI_FILE")
     if caminho_env:
         caminho = Path(caminho_env)
@@ -952,6 +964,7 @@ def encontrar_ficheiro_power_bi():
 
 
 def abrir_power_bi():
+    """Abre o ficheiro Power BI quando existe uma localização válida."""
     caminho = encontrar_ficheiro_power_bi()
     if sys.platform.startswith("win"):
         os.startfile(str(caminho))
