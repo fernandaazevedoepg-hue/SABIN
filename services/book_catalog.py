@@ -165,11 +165,38 @@ def variantes_isbn(isbn):
         variantes.append(isbn)
 
     isbn10 = isbn13_para_isbn10(isbn)
-
     if isbn10 and isbn10 not in variantes:
         variantes.append(isbn10)
 
+    # Converte ISBN-10 para ISBN-13 (prefixo 978) para comparar
+    # identificadores equivalentes encontrados em páginas externas.
+    if len(isbn) == 10 and re.fullmatch(r"\\d{9}[\\dX]", isbn):
+        base = "978" + isbn[:9]
+        soma = sum(
+            int(digito) * (1 if indice % 2 == 0 else 3)
+            for indice, digito in enumerate(base)
+        )
+        isbn13 = base + str((10 - soma % 10) % 10)
+        if isbn13 not in variantes:
+            variantes.append(isbn13)
+
     return variantes
+
+
+def isbn_equivalente(isbn_a, isbn_b):
+    """Indica se dois identificadores são o mesmo ISBN-10/ISBN-13."""
+    variantes_a = set(variantes_isbn(isbn_a))
+    variantes_b = set(variantes_isbn(isbn_b))
+    return bool(variantes_a and variantes_b and variantes_a & variantes_b)
+
+
+def contem_isbn(texto, isbn):
+    """Procura o ISBN normalizado no texto sem depender de hífenes/espaços."""
+    texto_normalizado = normalizar_isbn(texto)
+    return any(
+        variante in texto_normalizado
+        for variante in variantes_isbn(isbn)
+    )
 
 
 def isbn_valido(isbn):
@@ -994,7 +1021,7 @@ def extrair_json_ld(html, isbn):
                 or ""
             )
 
-            if isbn_objeto and not (set(variantes_isbn(isbn_objeto)) & set(variantes_isbn(isbn))):
+            if isbn_objeto and not isbn_equivalente(isbn_objeto, isbn):
                 continue
 
             def nomes(valor):
@@ -1127,13 +1154,17 @@ def extrair_pagina_html(url, isbn):
 
         resposta.raise_for_status()
         html = resposta.text
-    except Exception:
+    except Exception as erro:
+        print(
+            f"[ISBN][Página web] Não foi possível consultar {url}: "
+            f"{type(erro).__name__}: {erro}"
+        )
         return None
 
     texto = html_para_texto(html)
     evidencia = texto + " " + resposta.url
 
-    if isbn not in normalizar_isbn(evidencia):
+    if not contem_isbn(evidencia, isbn):
         return None
 
     dados = extrair_json_ld(
@@ -1239,10 +1270,14 @@ def extrair_pagina_reader(url, isbn):
 
         resposta.raise_for_status()
         texto = resposta.text
-    except Exception:
+    except Exception as erro:
+        print(
+            f"[ISBN][Reader] Não foi possível consultar {url}: "
+            f"{type(erro).__name__}: {erro}"
+        )
         return None
 
-    if isbn not in normalizar_isbn(texto):
+    if not contem_isbn(texto, isbn):
         return None
 
     titulo = None
@@ -1400,11 +1435,12 @@ def pesquisar_web(isbn, titulo=None, autores=None):
 
         for futuro in as_completed(futuros):
             try:
-                resultados.extend(
-                    futuro.result()
+                resultados.extend(futuro.result())
+            except Exception as erro:
+                print(
+                    f"[ISBN][Pesquisa web] Consulta falhou: "
+                    f"{type(erro).__name__}: {erro}"
                 )
-            except Exception:
-                pass
 
     urls = []
     vistos = set()
