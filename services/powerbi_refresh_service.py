@@ -17,6 +17,7 @@ _pending_report = None
 
 
 def _registar(mensagem):
+    """Regista mensagens sobre o processo de atualização do Power BI."""
     linha = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [SABIN-PowerBI] {mensagem}"
     print(linha, flush=True)
     try:
@@ -28,6 +29,7 @@ def _registar(mensagem):
 
 
 def _executar_refresh(caminho_relatorio, timeout_segundos, motivo):
+    """Executa a atualização do relatório e regista o resultado."""
     if not sys.platform.startswith("win"):
         _registar("A atualização automática do modelo local só está disponível no Windows.")
         return False
@@ -85,6 +87,7 @@ def _executar_refresh(caminho_relatorio, timeout_segundos, motivo):
 
 
 def _worker():
+    """Processa os pedidos de atualização em segundo plano."""
     global _worker_active, _pending_timeout, _pending_reason, _pending_report
     timeout_atual = 0
     motivo_atual = "Atualização analítica concluída"
