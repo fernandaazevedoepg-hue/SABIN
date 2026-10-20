@@ -168,8 +168,7 @@ def variantes_isbn(isbn):
     if isbn10 and isbn10 not in variantes:
         variantes.append(isbn10)
 
-    # Converte ISBN-10 para ISBN-13 (prefixo 978) para comparar
-    # identificadores equivalentes encontrados em páginas externas.
+    # Converte ISBN-10 para a variante ISBN-13 equivalente, quando existe.
     if len(isbn) == 10 and re.fullmatch(r"\\d{9}[\\dX]", isbn):
         base = "978" + isbn[:9]
         soma = sum(
@@ -880,8 +879,7 @@ def procurar_open_library(isbn):
     """
     isbn = normalizar_isbn(isbn)
 
-    # O endpoint /isbn/{isbn}.json é uma consulta direta por identificador;
-    # não depende dos resultados de pesquisa nem do motor DDGS.
+    # A consulta direta pelo ISBN evita depender dos resultados de pesquisa web.
     for variante in variantes_isbn(isbn):
         try:
             registo = get_json(
@@ -902,7 +900,7 @@ def procurar_open_library(isbn):
         autores = []
         assuntos = []
 
-        # O endpoint ISBN normalmente devolve referências de autores e obras.
+        # A resposta pode conter referências separadas para a obra e os autores.
         for entrada in registo.get("authors") or []:
             chave = entrada.get("key") if isinstance(entrada, dict) else None
             if not chave:
@@ -958,7 +956,7 @@ def procurar_open_library(isbn):
             )
             return resultado
 
-    # Fallback para os dois endpoints usados pela implementação anterior.
+    # Mantém a consulta alternativa caso o endpoint direto não encontre o livro.
     print("[ISBN][Open Library ISBN] Endpoint direto sem registo; a usar fallback antigo.")
     return _procurar_open_library_legado(isbn)
 
@@ -1400,6 +1398,7 @@ def pesquisar_ddgs(consulta):
 
 
 def pesquisar_web(isbn, titulo=None, autores=None):
+    """Pesquisa páginas externas e extrai dados que correspondam ao ISBN."""
     autor = (
         autores[0]
         if autores
@@ -1504,8 +1503,7 @@ def pesquisar_web(isbn, titulo=None, autores=None):
     if fontes:
         return fontes
 
-    # Se os sites bloquearam requests normais, tenta o Reader
-    # apenas nos primeiros resultados para não deixar o SABIN lento.
+    # Usa o Reader como alternativa e limita o número de páginas consultadas.
     with ThreadPoolExecutor(
         max_workers=min(3, len(urls) or 1)
     ) as executor:
@@ -1540,6 +1538,7 @@ def prioridade_fonte(fonte):
 
 
 def mesclar_fontes(fontes, isbn):
+    """Combina os campos encontrados, dando prioridade às fontes mais fiáveis."""
     fontes = [
         fonte
         for fonte in fontes
@@ -1644,9 +1643,8 @@ def faltam_campos(resultado):
     )
 
 
-# Cache apenas de resultados encontrados. Não guardar falhas temporárias (429,
-# timeout, bloqueios de rede), porque isso faria o mesmo ISBN continuar a falhar
-# durante toda a vida do processo no Render.
+# Guarda apenas resultados encontrados para evitar repetir consultas bem-sucedidas.
+# Falhas temporárias não ficam em cache, permitindo novas tentativas.
 _CACHE_EXTERNO = {}
 _CACHE_EXTERNO_MAX = 128
 
@@ -1712,8 +1710,7 @@ def procurar_externo_cache(isbn):
             isbn,
         )
 
-    # Só guardar resultados positivos. Se todas as fontes falharem agora,
-    # a próxima tentativa poderá voltar a consultar as APIs.
+    # Só guarda resultados válidos; falhas temporárias podem ser consultadas novamente.
     if combinado and combinado.get("sucesso") and combinado.get("titulo"):
         if len(_CACHE_EXTERNO) >= _CACHE_EXTERNO_MAX:
             _CACHE_EXTERNO.pop(next(iter(_CACHE_EXTERNO)))
@@ -1723,6 +1720,7 @@ def procurar_externo_cache(isbn):
 
 
 def procurar_livro(isbn):
+    """Procura um livro na base local e, se necessário, em fontes externas."""
     isbn = normalizar_isbn(isbn)
 
     print(
