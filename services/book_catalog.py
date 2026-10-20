@@ -126,6 +126,7 @@ GENERO_ALIASES = [
 
 
 def normalizar_isbn(isbn):
+    """Normaliza o ISBN, removendo caracteres que não fazem parte do identificador."""
     return re.sub(
         r"[^0-9Xx]",
         "",
@@ -134,6 +135,7 @@ def normalizar_isbn(isbn):
 
 
 def isbn13_para_isbn10(isbn):
+    """Converte um ISBN-13 compatível para o ISBN-10 equivalente."""
     isbn = normalizar_isbn(isbn)
 
     if len(isbn) != 13 or not isbn.startswith("978") or not isbn.isdigit():
@@ -158,6 +160,7 @@ def isbn13_para_isbn10(isbn):
 
 
 def variantes_isbn(isbn):
+    """Devolve as variantes ISBN-10 e ISBN-13 do mesmo identificador, quando aplicável."""
     isbn = normalizar_isbn(isbn)
     variantes = []
 
@@ -199,6 +202,7 @@ def contem_isbn(texto, isbn):
 
 
 def isbn_valido(isbn):
+    """Valida o formato e o dígito de controlo do ISBN."""
     isbn = normalizar_isbn(isbn)
 
     if len(isbn) == 10:
@@ -578,6 +582,7 @@ def mapear_generos(valores):
 
 
 def procurar_livro_local(isbn):
+    """Procura o ISBN na base de dados local do SABIN."""
     isbn = normalizar_isbn(isbn)
 
     query = text("""
@@ -662,6 +667,7 @@ def procurar_livro_local(isbn):
 
 
 def get_json(url, params):
+    """Faz um pedido HTTP a uma API e devolve a resposta em formato JSON."""
     resposta = session.get(
         url,
         params=params,
@@ -673,6 +679,7 @@ def get_json(url, params):
 
 
 def procurar_google_books(isbn):
+    """Procura dados bibliográficos através da API Google Books."""
     isbn = normalizar_isbn(isbn)
     variantes = variantes_isbn(isbn)
 
@@ -961,6 +968,7 @@ def procurar_open_library(isbn):
     return _procurar_open_library_legado(isbn)
 
 def extrair_json_ld(html, isbn):
+    """Extrai metadados bibliográficos estruturados de uma página HTML."""
     blocos = re.findall(
         r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
         html,
@@ -1143,6 +1151,7 @@ def valor_rotulado(texto, rotulos):
 
 
 def extrair_pagina_html(url, isbn):
+    """Obtém dados bibliográficos de uma página que corresponda ao ISBN."""
     try:
         resposta = session.get(
             url,
@@ -1258,6 +1267,7 @@ def extrair_pagina_html(url, isbn):
 
 
 def extrair_pagina_reader(url, isbn):
+    """Extrai dados bibliográficos através da versão de leitura da página."""
     reader_url = "https://r.jina.ai/" + url
 
     try:
@@ -1357,6 +1367,7 @@ def extrair_pagina_reader(url, isbn):
 
 
 def pesquisar_ddgs(consulta):
+    """Pesquisa páginas web através do motor de pesquisa configurado."""
     try:
         return (
             DDGS(
@@ -1529,6 +1540,7 @@ def pesquisar_web(isbn, titulo=None, autores=None):
 
 
 def prioridade_fonte(fonte):
+    """Obtém a prioridade atribuída a uma fonte bibliográfica."""
     return int(
         fonte.get(
             "prioridade",
@@ -1628,6 +1640,7 @@ def mesclar_fontes(fontes, isbn):
 
 
 def faltam_campos(resultado):
+    """Verifica se o resultado ainda tem campos bibliográficos por preencher."""
     if not resultado:
         return True
 
@@ -1650,6 +1663,7 @@ _CACHE_EXTERNO_MAX = 128
 
 
 def procurar_externo_cache(isbn):
+    """Consulta fontes externas e reutiliza resultados válidos em cache."""
     isbn = normalizar_isbn(isbn)
 
     if isbn in _CACHE_EXTERNO:
