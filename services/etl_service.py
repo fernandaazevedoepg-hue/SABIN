@@ -142,9 +142,8 @@ def _executar_em_background():
                 erro,
             )
 
-        # Depois de o ETL terminar com sucesso, pede ao Power BI Desktop
-        # para atualizar o modelo local, caso o relatório já esteja aberto.
-        # A atualização corre num thread separado e não bloqueia o SABIN.
+        # Após o ETL, atualiza o modelo local do Power BI Desktop, se estiver aberto.
+        # A tarefa é executada em segundo plano para não bloquear a aplicação.
         if sucesso:
             try:
                 from services.powerbi_refresh_service import iniciar_atualizacao_automatica
