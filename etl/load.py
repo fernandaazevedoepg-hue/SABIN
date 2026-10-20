@@ -17,7 +17,7 @@ from transform import (
 
 
 def limpar_data_warehouse():
-    # Limpa todas as tabelas do Data Warehouse
+    """Limpa as tabelas do modelo dimensional antes de uma nova carga."""
     query = """
     TRUNCATE TABLE
         dw.fact_vendas,
@@ -37,7 +37,7 @@ def limpar_data_warehouse():
 
 
 def carregar_dim_cliente(dim_cliente):
-    # Cria o cliente utilizado nas vendas sem identificação
+    """Carrega os clientes e inclui o registo para vendas sem identificação."""
     cliente_desconhecido = pd.DataFrame(
         [
             {
@@ -133,7 +133,7 @@ def carregar_bridge_livro_genero(bridge):
 
 
 def ler_dimensao(nome_tabela):
-    # Lê uma dimensão já carregada no Data Warehouse
+    """Lê uma dimensão carregada para obter as respetivas chaves."""
     query = f"SELECT * FROM dw.{nome_tabela};"
 
     return pd.read_sql(query, engine)
@@ -152,7 +152,7 @@ def carregar_fact_vendas(fact_vendas):
 def main():
     print("SABIN - ETL | CARGA DO DATA WAREHOUSE")
 
-    # Extract
+    # Extração dos dados da base operacional.
     vendas = extrair_tabela("vendas")
     itens_venda = extrair_tabela("itens_venda")
     livros = extrair_tabela("livros")
@@ -166,7 +166,7 @@ def main():
         vendas["status"] == "Concluída"
     ].copy()
 
-    # Transform das dimensões
+    # Preparação das dimensões analíticas.
     dim_cliente = transformar_dim_cliente(clientes)
     dim_livro = transformar_dim_livro(livros)
     dim_pagamento = transformar_dim_pagamento(vendas_concluidas)
@@ -174,10 +174,10 @@ def main():
     dim_autor = transformar_dim_autor(autores)
     dim_genero = transformar_dim_genero(generos)
 
-    # Limpar o Data Warehouse
+    # Reinicia as tabelas antes de carregar os novos dados.
     limpar_data_warehouse()
 
-    # Load das dimensões
+    # Carga das dimensões.
     carregar_dim_cliente(dim_cliente)
     carregar_dim_livro(dim_livro)
     carregar_dim_pagamento(dim_pagamento)
@@ -192,7 +192,7 @@ def main():
     print("dim_autor     -> carregada")
     print("dim_genero    -> carregada")
 
-    # Ler dimensões já com as surrogate keys
+    # Lê as dimensões para obter as chaves geradas pela base de dados.
     dim_cliente_dw = ler_dimensao("dim_cliente")
     dim_livro_dw = ler_dimensao("dim_livro")
     dim_pagamento_dw = ler_dimensao("dim_pagamento")
@@ -200,7 +200,7 @@ def main():
     dim_autor_dw = ler_dimensao("dim_autor")
     dim_genero_dw = ler_dimensao("dim_genero")
 
-    # Criar as bridges
+    # Relaciona livros com autores e géneros.
     bridge_livro_autor = transformar_bridge_livro_autor(
         livro_autores,
         dim_livro_dw,
@@ -213,7 +213,7 @@ def main():
         dim_genero_dw,
     )
 
-    # Carregar as bridges
+    # Carga das tabelas de relação.
     carregar_bridge_livro_autor(bridge_livro_autor)
     carregar_bridge_livro_genero(bridge_livro_genero)
 
@@ -227,7 +227,7 @@ def main():
         f"{len(bridge_livro_genero)} linha(s)"
     )
 
-    # Criar a fact_vendas
+    # Constrói a tabela de factos com as vendas concluídas.
     fact_vendas = transformar_fact_vendas(
         vendas,
         itens_venda,
@@ -265,7 +265,7 @@ def main():
         .sum()
     )
 
-    # Load da fact
+    # Carga da tabela de factos.
     carregar_fact_vendas(fact_vendas)
 
     print("fact_vendas -> carregada")
