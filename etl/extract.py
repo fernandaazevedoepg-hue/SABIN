@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine
 
 
-# Carrega as variáveis existentes no ficheiro .env
+# Carrega as configurações da ligação à base de dados.
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -16,13 +16,12 @@ if not DATABASE_URL:
     )
 
 
-# Cria a ligação ao PostgreSQL
+# Ligação usada pelas etapas de extração e carga.
 engine = create_engine(DATABASE_URL)
 
 
 def extrair_tabela(nome_tabela):
-
-    # Extrai uma tabela do schema public e devolve os dados num DataFrame Pandas.
+    """Devolve os registos de uma tabela operacional num DataFrame."""
 
     query = f"SELECT * FROM public.{nome_tabela};"
 
@@ -57,7 +56,7 @@ def main():
             f"{tabela:<12} -> {len(df)} linha(s)"
         )
 
-    # INSPEÇÃO DOS DADOS
+    # Verifica a estrutura e a qualidade dos dados extraídos.
 
     vendas = dados["vendas"]
     itens_venda = dados["itens_venda"]
