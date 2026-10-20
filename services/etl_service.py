@@ -13,6 +13,7 @@ BASE_DIR = (
 
 
 def encontrar_load_script():
+    """Localiza o script responsável pela carga do Data Warehouse."""
     caminho = (
         BASE_DIR
         / "etl"
@@ -31,6 +32,7 @@ def executar_comando(
     comando,
     nome_etapa,
 ):
+    """Executa um comando externo e recolhe o resultado."""
     processo = subprocess.run(
         comando,
         cwd=BASE_DIR,
@@ -56,6 +58,7 @@ def executar_comando(
 
 
 def atualizar_alertas_stock_rapido():
+    """Atualiza os alertas de stock sem executar todo o processo analítico."""
     from analysis.stock_alerts import (
         gerar_alertas_stock,
         guardar_alertas_stock,
@@ -74,6 +77,7 @@ def atualizar_alertas_stock_rapido():
 
 
 def executar_atualizacao_analitica():
+    """Executa o processo de atualização dos dados analíticos."""
     resultados = []
 
     load_script = encontrar_load_script()
@@ -170,6 +174,7 @@ def _executar_em_background():
             break
 
 def solicitar_atualizacao_analitica():
+    """Solicita uma atualização analítica sem bloquear a interface."""
     global _atualizacao_em_execucao
     global _atualizacao_pendente
 
@@ -205,6 +210,7 @@ def solicitar_atualizacao_analitica():
 
 
 def obter_estado_atualizacao():
+    """Devolve o estado da atualização analítica."""
     with _estado_lock:
         return {
             "em_execucao": _atualizacao_em_execucao,
