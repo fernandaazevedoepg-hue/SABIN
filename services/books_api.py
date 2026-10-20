@@ -7,6 +7,7 @@ def limpar_isbn(isbn):
 
 
 def isbn_valido(isbn):
+    """Verifica se o ISBN-10 ou ISBN-13 tem um dígito de controlo válido."""
     # Valida ISBN-13
     if len(isbn) == 13:
         if not isbn.isdigit():
