@@ -4,7 +4,7 @@ from etl.extract import engine
 
 
 def carregar_vendas_dw():
-    # Lê os dados da tabela de factos
+    """Carrega do Data Warehouse os dados necessários aos indicadores."""
     query = """
     SELECT
         venda_id_origem,
@@ -19,6 +19,11 @@ def carregar_vendas_dw():
 
 
 def calcular_kpis(fact_vendas):
+    """Calcula indicadores de receita, vendas e quantidades.
+
+    O ticket médio corresponde à receita dividida pelo número de vendas.
+    Os rácios devolvem zero quando o respetivo denominador é zero.
+    """
     # Receita total
     receita_total = fact_vendas["subtotal"].sum()
 
