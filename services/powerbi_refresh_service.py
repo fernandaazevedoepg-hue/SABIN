@@ -131,7 +131,7 @@ def iniciar_atualizacao_automatica(caminho_relatorio=None, aguardar_modelo=False
 
     with _lock:
         if _worker_active:
-            # Preserva o pedido mais exigente se um refresh já estiver em curso.
+            # Mantém o pedido de atualização mais completo quando já existe um em execução.
             if _pending_timeout is None or timeout > _pending_timeout:
                 _pending_timeout = timeout
                 _pending_reason = descricao
