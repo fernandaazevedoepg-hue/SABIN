@@ -24,6 +24,7 @@ engine = create_engine(
 
 
 def carregar_livros_gestao():
+    """Carrega os livros apresentados na área de gestão do catálogo."""
     query = text("""
         SELECT
             id,
@@ -82,6 +83,7 @@ def carregar_livros_gestao():
 
 
 def carregar_autores_gestao():
+    """Carrega os autores disponíveis para a gestão do catálogo."""
     query = text("""
         SELECT
             id,
@@ -107,6 +109,7 @@ def carregar_autores_gestao():
 
 
 def carregar_generos_gestao():
+    """Carrega os géneros disponíveis para o catálogo."""
     query = text("""
         SELECT
             id,
@@ -132,6 +135,7 @@ def carregar_generos_gestao():
 
 
 def obter_livro_gestao(livro_id):
+    """Obtém os dados de um livro para consulta ou edição."""
     if not livro_id:
         return None
 
@@ -230,6 +234,7 @@ def repor_stock(
     quantidade,
     observacao=None,
 ):
+    """Regista a reposição de unidades e atualiza o stock do livro."""
     if not livro_id:
         raise ValueError(
             "Seleciona um livro."
@@ -345,6 +350,7 @@ def alterar_preco(
     livro_id,
     novo_preco,
 ):
+    """Atualiza o preço de um livro e regista a alteração."""
     if not livro_id:
         raise ValueError(
             "Seleciona um livro."
@@ -434,6 +440,7 @@ def alterar_preco(
 
 
 def normalizar_nomes_autores(autores_texto):
+    """Normaliza os nomes dos autores introduzidos no formulário."""
     if not autores_texto:
         return []
 
@@ -463,6 +470,7 @@ def obter_ou_criar_autor(
     connection,
     nome,
 ):
+    """Procura um autor existente ou cria um novo registo."""
     existente = (
         connection.execute(
             text("""
@@ -515,6 +523,7 @@ def adicionar_livro(
     autores_texto=None,
     genero_ids=None,
 ):
+    """Valida e adiciona um livro ao catálogo."""
     titulo = (titulo or "").strip()
     isbn = re.sub(
         r"[^0-9Xx]",
@@ -750,6 +759,7 @@ def atualizar_livro(
     autores_texto=None,
     genero_ids=None,
 ):
+    """Valida e guarda as alterações feitas a um livro."""
     if not livro_id:
         raise ValueError(
             "Seleciona um livro."
@@ -935,6 +945,7 @@ def consultar_movimentos_stock(
     livro_id=None,
     limite=20,
 ):
+    """Consulta o histórico de movimentos de stock."""
     limite = max(
         1,
         min(
@@ -1014,6 +1025,7 @@ def consultar_historico_precos(
     livro_id=None,
     limite=20,
 ):
+    """Consulta as alterações de preço registadas."""
     limite = max(
         1,
         min(
