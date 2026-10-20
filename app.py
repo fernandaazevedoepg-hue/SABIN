@@ -80,6 +80,7 @@ engine = create_engine(
 # Formatação
 
 def formatar_euro(valor):
+    """Formata um valor monetário em euros para apresentação na interface."""
     if valor is None or pd.isna(valor):
         return "—"
 
@@ -92,6 +93,7 @@ def formatar_euro(valor):
 
 
 def formatar_inteiro(valor):
+    """Formata um valor numérico inteiro para apresentação."""
     if valor is None or pd.isna(valor):
         return "—"
 
@@ -102,6 +104,7 @@ def formatar_inteiro(valor):
 
 
 def formatar_percentagem(valor):
+    """Formata um valor percentual para apresentação na interface."""
     if valor is None or pd.isna(valor):
         return "—"
 
@@ -112,6 +115,7 @@ def formatar_percentagem(valor):
 
 
 def formatar_mes(valor):
+    """Formata uma data para apresentar o mês e o ano."""
     if valor is None or pd.isna(valor):
         return "—"
 
@@ -177,6 +181,7 @@ def _usar_dados_operacionais_visao_geral():
 
 
 def carregar_kpis():
+    """Carrega os indicadores apresentados na visão geral."""
     if _usar_dados_operacionais_visao_geral():
         query = text("""
             SELECT
@@ -231,6 +236,7 @@ def carregar_kpis():
 
 
 def carregar_receita_mensal():
+    """Carrega os valores mensais usados no gráfico de receita."""
     if _usar_dados_operacionais_visao_geral():
         query = text("""
             SELECT
@@ -276,6 +282,7 @@ def carregar_receita_mensal():
 
 
 def carregar_top_livros():
+    """Obtém os livros com melhor desempenho de vendas."""
     if _usar_dados_operacionais_visao_geral():
         query = text("""
             SELECT
@@ -316,6 +323,7 @@ def carregar_top_livros():
 # Catálogo
 
 def carregar_catalogo_local():
+    """Carrega os livros existentes no catálogo local."""
     query = text("""
         SELECT
             l.id,
@@ -387,6 +395,7 @@ def carregar_generos():
 
 
 def parece_isbn(valor):
+    """Verifica se o texto tem o formato esperado de um ISBN."""
     if not valor:
         return False
 
@@ -402,6 +411,7 @@ def parece_isbn(valor):
 # Previsões
 
 def carregar_metricas_previsao():
+    """Carrega as métricas que permitem avaliar o modelo de previsão."""
     query = text("""
         SELECT *
         FROM dw.metricas_previsao
@@ -420,6 +430,7 @@ def carregar_metricas_previsao():
 
 
 def carregar_previsao_receita():
+    """Carrega os valores de receita previstos para os próximos meses."""
     query = text("""
         SELECT
             mes,
@@ -444,6 +455,7 @@ def carregar_previsao_receita():
 
 
 def carregar_alertas_previsao():
+    """Carrega os alertas gerados a partir das previsões."""
     query = text("""
         SELECT
             periodo,
@@ -479,6 +491,7 @@ def carregar_alertas_previsao():
 # Stock
 
 def carregar_alertas_stock():
+    """Carrega os alertas relacionados com o stock."""
     query = text("""
         SELECT
             titulo,
@@ -512,6 +525,7 @@ def carregar_alertas_stock():
 
 
 def carregar_stock_completo():
+    """Carrega a informação detalhada do stock dos livros."""
     query = text("""
         SELECT
             l.id,
@@ -551,6 +565,7 @@ def carregar_stock_completo():
 # Gráficos
 
 def criar_grafico_receita_mensal(dados):
+    """Constrói o gráfico de evolução mensal da receita."""
     figura = go.Figure()
 
     figura.add_trace(
@@ -602,6 +617,7 @@ def criar_grafico_receita_mensal(dados):
 
 
 def criar_grafico_top_livros(dados):
+    """Constrói o gráfico dos livros com mais vendas."""
     dados = dados.sort_values(
         "unidades_vendidas",
         ascending=True,
@@ -660,6 +676,7 @@ def criar_grafico_top_livros(dados):
 
 
 def criar_grafico_previsao(dados):
+    """Constrói o gráfico que compara os valores reais e previstos."""
     historico = dados[
         (
             dados["tipo"] == "Histórico"
@@ -737,6 +754,7 @@ def criar_grafico_previsao(dados):
 
 
 def criar_grafico_stock(dados):
+    """Constrói o gráfico de indicadores de stock."""
     cores = {
         "Crítico": "#dc2626",
         "Atenção": "#f59e0b",
@@ -1319,6 +1337,7 @@ def criar_sidebar():
 # Página Visão Geral
 
 def pagina_visao_geral():
+    """Constrói a página inicial com os principais indicadores do SABIN."""
     kpis = carregar_kpis()
     receita_mensal = carregar_receita_mensal()
     top_livros = carregar_top_livros()
@@ -1770,6 +1789,7 @@ def criar_opcoes_livros_venda():
 
 
 def pagina_registar_venda():
+    """Constrói a página de registo de vendas."""
     opcoes_clientes = criar_opcoes_clientes_venda()
     opcoes_livros = criar_opcoes_livros_venda()
 
@@ -2117,6 +2137,7 @@ def criar_tabela_historico_precos(historico):
     )
 
 def pagina_gestao_catalogo():
+    """Constrói a página de gestão e edição do catálogo."""
     livros = carregar_livros_gestao()
     generos = carregar_generos_gestao()
 
@@ -2632,6 +2653,7 @@ def criar_tabela_reservas(dados):
 
 
 def pagina_reservas():
+    """Constrói a página de consulta e gestão de reservas."""
     expirar_reservas()
 
     clientes = carregar_clientes_reserva()
@@ -2819,6 +2841,7 @@ def pagina_reservas():
 # Página Catálogo
 
 def pagina_catalogo():
+    """Constrói a página de consulta do catálogo de livros."""
     catalogo = carregar_catalogo_local()
     generos = carregar_generos()
 
@@ -2925,6 +2948,7 @@ def pagina_catalogo():
 # Página Previsões
 
 def pagina_previsoes():
+    """Constrói a página de análise das previsões de receita."""
     metricas = carregar_metricas_previsao()
     previsao = carregar_previsao_receita()
     alertas = carregar_alertas_previsao()
@@ -4023,6 +4047,7 @@ def pagina_interpretacao_stock():
 
 
 def pagina_stock():
+    """Constrói a página de análise e gestão do stock."""
     expirar_reservas()
     dados = carregar_alertas_stock()
     stock_completo = carregar_stock_completo()
@@ -4212,6 +4237,7 @@ def pagina_stock():
 # Página Exportações
 
 def pagina_exportacoes():
+    """Constrói a página de exportação de relatórios."""
     return html.Div(
         className="export-page",
         children=[
@@ -5258,6 +5284,7 @@ def inferir_generos_api(assuntos):
 
 
 def normalizar_data_api(valor):
+    """Normaliza datas recebidas de fontes externas."""
     if not valor:
         return None
 
@@ -5288,6 +5315,7 @@ def normalizar_data_api(valor):
     prevent_initial_call=True,
 )
 def preencher_novo_livro_por_isbn(isbn):
+    """Procura dados de um livro pelo ISBN e prepara o formulário de registo."""
     isbn_limpo = re.sub(
         r"[^0-9Xx]",
         "",
@@ -5945,6 +5973,7 @@ def pesquisar_catalogo(
     genero,
     n_clicks,
 ):
+    """Filtra o catálogo com base nos critérios introduzidos pelo utilizador."""
     dados = carregar_catalogo_local()
     dados_filtrados = dados.copy()
 
@@ -6088,6 +6117,7 @@ def criar_cliente_na_venda(
     email,
     opcoes_atuais,
 ):
+    """Valida os dados e cria um cliente a partir do formulário de venda."""
     try:
         resultado = adicionar_cliente(
             nome,
@@ -6134,6 +6164,7 @@ def criar_cliente_na_venda(
 def atualizar_info_livro_venda(
     livro_id,
 ):
+    """Atualiza a informação do livro selecionado para a venda."""
     if not livro_id:
         return ""
 
@@ -6208,6 +6239,7 @@ def gerir_venda(
     metodo_pagamento,
     carrinho,
 ):
+    """Controla as ações do carrinho e o registo da venda."""
     carrinho = carrinho or []
     acao = ctx.triggered_id
 
