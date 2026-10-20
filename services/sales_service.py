@@ -31,6 +31,7 @@ METODOS_PAGAMENTO = [
 
 
 def carregar_clientes():
+    """Carrega os clientes disponíveis para registar uma venda."""
     query = text("""
         SELECT
             id,
@@ -55,6 +56,7 @@ def carregar_clientes():
 
 
 def carregar_livros_disponiveis():
+    """Carrega os livros com stock disponível para venda."""
     query = text("""
         SELECT
             id,
@@ -93,6 +95,7 @@ def carregar_livros_disponiveis():
 
 
 def obter_livro(livro_id):
+    """Obtém os dados e o stock atual de um livro."""
     query = text("""
         SELECT
             id,
@@ -131,6 +134,7 @@ def registar_venda(
     metodo_pagamento,
     itens
 ):
+    """Valida e regista uma venda, incluindo os respetivos itens."""
     if metodo_pagamento not in METODOS_PAGAMENTO:
         raise ValueError(
             "Método de pagamento inválido."
