@@ -27,6 +27,7 @@ MESES_STOCK_ALVO = 3
 
 
 def obter_data_referencia():
+    """Obtém a data usada como referência para analisar o stock."""
     query = text("""
         SELECT CURRENT_DATE AS data_referencia;
     """)
@@ -42,6 +43,7 @@ def obter_data_referencia():
 
 
 def carregar_livros():
+    """Carrega os livros e as quantidades disponíveis."""
     query = text("""
         SELECT
             id AS livro_id,
@@ -67,6 +69,7 @@ def carregar_vendas_periodo(
     data_inicio,
     data_fim,
 ):
+    """Obtém as vendas do período usado na análise de stock."""
     query = text("""
         SELECT
             iv.livro_id,
@@ -103,6 +106,7 @@ def calcular_nivel(
     media_mensal_vendas,
     meses_cobertura,
 ):
+    """Classifica o nível de stock com base nos critérios definidos."""
     if stock_disponivel <= 1:
         return "Crítico"
 
@@ -119,6 +123,7 @@ def calcular_nivel(
 
 
 def calcular_recomendacao(nivel):
+    """Define a recomendação associada ao nível de stock."""
     if nivel == "Crítico":
         return "Repor stock com prioridade"
 
@@ -136,6 +141,7 @@ def calcular_quantidade_recomendada(
     media_mensal_vendas,
     nivel,
 ):
+    """Calcula a quantidade sugerida para reposição."""
     if nivel == "Sem procura recente":
         return 0
 
@@ -155,6 +161,7 @@ def calcular_quantidade_recomendada(
 
 
 def gerar_alertas_stock():
+    """Analisa o stock e cria alertas para os livros que precisam de atenção."""
     data_referencia = obter_data_referencia()
 
     data_inicio = (
@@ -306,6 +313,7 @@ def gerar_alertas_stock():
 
 
 def guardar_alertas_stock(dados):
+    """Guarda os alertas de stock para consulta e análise."""
     os.makedirs(
         "outputs",
         exist_ok=True,
