@@ -27,3 +27,8 @@ jobs:
 
       - name: Executar testes unitarios
         run: python -m unittest discover -s tests -v
+
+      - name: Testar importacao da aplicacao
+        env:
+          DATABASE_URL: postgresql+psycopg2://sabin:sabin@localhost:5432/sabin_test
+        run: python -c "import app; print('Importacao da aplicacao concluida')"
