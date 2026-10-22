@@ -1,6 +1,3 @@
--- Modelo dimensional utilizado pelo ETL e pelo Power BI.
--- O ETL preenche estas tabelas a partir da base operacional public.
-
 CREATE SCHEMA IF NOT EXISTS dw;
 
 CREATE TABLE IF NOT EXISTS dw.dim_cliente (

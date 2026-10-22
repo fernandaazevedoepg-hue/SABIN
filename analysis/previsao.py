@@ -15,6 +15,13 @@ from sklearn.metrics import (
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
+from analysis.dw_consultas import (
+    DW_SCHEMA,
+    data_key,
+    obter_data_referencia_sql,
+    verificar_datas,
+)
+
 
 load_dotenv()
 
@@ -45,7 +52,7 @@ FEATURES = [
 
 def carregar_receita_mensal():
     """Carrega a receita mensal real a partir do Data Warehouse."""
-    query = text("""
+    query = text(f"""
         SELECT
             DATE_TRUNC(
                 'month',
@@ -53,19 +60,22 @@ def carregar_receita_mensal():
             )::date AS mes,
 
             ROUND(
-                SUM(f.subtotal),
+                SUM(f.receita_atribuida),
                 2
             ) AS receita
 
-        FROM dw.fact_vendas f
+        FROM {DW_SCHEMA}.fact_vendas f
 
-        JOIN dw.dim_data d
+        JOIN {DW_SCHEMA}.dim_data d
             ON f.data_key = d.data_key
 
         WHERE
             d.data < DATE_TRUNC(
                 'month',
-                CURRENT_DATE
+                COALESCE(
+                    CAST(:data_referencia AS date),
+                    CURRENT_DATE
+                )
             )
 
         GROUP BY
@@ -81,6 +91,9 @@ def carregar_receita_mensal():
         df = pd.read_sql(
             query,
             connection,
+            params={
+                "data_referencia": obter_data_referencia_sql(),
+            },
         )
 
     if df.empty:
@@ -538,21 +551,78 @@ def guardar_resultados(
         encoding="utf-8-sig",
     )
 
-    dados_powerbi.to_sql(
-        "previsao_receita",
-        engine,
-        schema="dw",
-        if_exists="replace",
-        index=False,
+    guardar_previsao_dw(
+        metricas.iloc[0],
+        previsoes,
     )
 
-    metricas.to_sql(
-        "metricas_previsao",
-        engine,
-        schema="dw",
-        if_exists="replace",
-        index=False,
-    )
+
+def guardar_previsao_dw(
+    metricas,
+    previsoes,
+):
+    """Grava as métricas na dim_modelo_previsao e as previsões na fact_previsao.
+
+    Grão da fact_previsao: mês previsto x modelo (data_key = 1.º dia do mês).
+    As previsões anteriores do mesmo modelo são substituídas pelas novas,
+    numa única transação.
+    """
+    chaves_data = [
+        data_key(mes)
+        for mes in previsoes["mes"]
+    ]
+
+    with engine.begin() as connection:
+        verificar_datas(
+            connection,
+            chaves_data,
+        )
+
+        modelo_key = connection.execute(
+            text(f"""
+                INSERT INTO {DW_SCHEMA}.dim_modelo_previsao
+                    (modelo, mae, rmse, r2)
+                VALUES
+                    (:modelo, :mae, :rmse, :r2)
+                ON CONFLICT (modelo) DO UPDATE SET
+                    mae = EXCLUDED.mae,
+                    rmse = EXCLUDED.rmse,
+                    r2 = EXCLUDED.r2
+                RETURNING modelo_key;
+            """),
+            {
+                "modelo": metricas["modelo"],
+                "mae": float(metricas["mae"]),
+                "rmse": float(metricas["rmse"]),
+                "r2": float(metricas["r2"]),
+            },
+        ).scalar_one()
+
+        connection.execute(
+            text(f"""
+                DELETE FROM {DW_SCHEMA}.fact_previsao
+                WHERE modelo_key = :modelo_key;
+            """),
+            {"modelo_key": modelo_key},
+        )
+
+        for chave, receita in zip(
+            chaves_data,
+            previsoes["receita_prevista"],
+        ):
+            connection.execute(
+                text(f"""
+                    INSERT INTO {DW_SCHEMA}.fact_previsao
+                        (data_key, modelo_key, receita_prevista)
+                    VALUES
+                        (:data_key, :modelo_key, :receita_prevista);
+                """),
+                {
+                    "data_key": chave,
+                    "modelo_key": modelo_key,
+                    "receita_prevista": float(receita),
+                },
+            )
 
 
 def main():
@@ -579,7 +649,10 @@ def main():
     )
 
     mes_corrente = (
-        pd.Timestamp.today()
+        pd.Timestamp(
+            obter_data_referencia_sql()
+            or pd.Timestamp.today()
+        )
         .to_period("M")
         .to_timestamp()
     )
@@ -658,11 +731,11 @@ def main():
     )
 
     print(
-        "dw.previsao_receita"
+        f"{DW_SCHEMA}.dim_modelo_previsao"
     )
 
     print(
-        "dw.metricas_previsao"
+        f"{DW_SCHEMA}.fact_previsao"
     )
 
     print()

@@ -19,6 +19,12 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+from analysis.dw_consultas import (
+    SQL_STOCK_ATUAL,
+    carregar_metricas_previsao as carregar_metricas_previsao_dw,
+    carregar_previsao_receita as carregar_previsao_receita_dw,
+)
+
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -70,14 +76,13 @@ def carregar_kpis():
 def carregar_metricas():
     """Carrega as métricas do modelo de previsão."""
     try:
-        dados = ler_df("SELECT * FROM dw.metricas_previsao LIMIT 1;")
-        if dados.empty:
+        metricas = carregar_metricas_previsao_dw(engine)
+        if not metricas:
             return {}
-        linha = dados.iloc[0]
         return {
-            coluna: linha[coluna]
-            for coluna in dados.columns
-            if pd.notna(linha[coluna])
+            coluna: valor
+            for coluna, valor in metricas.items()
+            if coluna != "modelo_key" and pd.notna(valor)
         }
     except Exception as erro:
         print("Erro ao carregar métricas:", erro)
@@ -169,7 +174,7 @@ def carregar_clientes():
 
 def carregar_stock():
     """Carrega os dados de stock para exportação."""
-    return ler_df("""
+    return ler_df(f"""
         SELECT
             titulo,
             estoque_atual AS stock_fisico,
@@ -181,7 +186,7 @@ def carregar_stock():
             quantidade_recomendada,
             nivel,
             recomendacao
-        FROM dw.alertas_stock
+        FROM ({SQL_STOCK_ATUAL}) alertas_stock
         ORDER BY
             CASE
                 WHEN nivel = 'Crítico' THEN 1
@@ -196,11 +201,7 @@ def carregar_stock():
 
 def carregar_previsoes():
     """Carrega as previsões de receita para exportação."""
-    return ler_df("""
-        SELECT mes, receita_real, receita_prevista, tipo
-        FROM dw.previsao_receita
-        ORDER BY mes;
-    """)
+    return carregar_previsao_receita_dw(engine)
 
 
 def dados_exportacao():

@@ -5,6 +5,14 @@ import pandas as pd
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 
+from analysis.dw_consultas import (
+    DW_SCHEMA,
+    carregar_metricas_previsao,
+    carregar_previsoes_modelo,
+    data_key,
+    verificar_datas,
+)
+
 
 load_dotenv()
 
@@ -34,45 +42,29 @@ COLUNAS_ALERTAS = [
 
 def carregar_metricas():
     """Carrega as métricas usadas para avaliar as previsões."""
-    query = text("""
-        SELECT *
-        FROM dw.metricas_previsao;
-    """)
+    metricas = carregar_metricas_previsao(
+        engine
+    )
 
-    with engine.connect() as connection:
-        df = pd.read_sql(
-            query,
-            connection,
-        )
-
-    if df.empty:
+    if not metricas:
         raise ValueError(
             "Não existem métricas "
             "de previsão."
         )
 
-    return df.iloc[0]
+    return pd.Series(metricas)
 
 
 def carregar_previsoes():
     """Carrega a série de receitas previstas para análise."""
-    query = text("""
-        SELECT
-            mes,
-            receita_prevista
-
-        FROM dw.previsao_receita
-
-        WHERE tipo = 'Previsão'
-
-        ORDER BY mes;
-    """)
-
-    with engine.connect() as connection:
-        df = pd.read_sql(
-            query,
-            connection,
-        )
+    df = carregar_previsoes_modelo(
+        engine
+    )[
+        [
+            "mes",
+            "receita_prevista",
+        ]
+    ]
 
     if df.empty:
         raise ValueError(
@@ -286,9 +278,16 @@ def gerar_alertas(
 
 
 def guardar_alertas(
-    alertas
+    alertas,
+    modelo_key,
 ):
-    """Guarda os alertas em CSV e na tabela correspondente do Data Warehouse."""
+    """Guarda os alertas em CSV e na fact_alerta_previsao.
+
+    Grão: mês do alerta x modelo x alerta. Cada combinação nível, tipo e
+    mensagem é procurada na dim_alerta_previsao e acrescentada se for nova.
+    Os alertas anteriores do mesmo modelo são substituídos numa única
+    transação.
+    """
     os.makedirs(
         "outputs",
         exist_ok=True,
@@ -300,13 +299,92 @@ def guardar_alertas(
         encoding="utf-8-sig",
     )
 
-    alertas.to_sql(
-        "alertas_previsao",
-        engine,
-        schema="dw",
-        if_exists="replace",
-        index=False,
+    with engine.begin() as connection:
+        chaves_data = [
+            data_key(periodo)
+            for periodo in alertas["periodo"]
+        ]
+
+        verificar_datas(
+            connection,
+            chaves_data,
+        )
+
+        connection.execute(
+            text(f"""
+                DELETE FROM {DW_SCHEMA}.fact_alerta_previsao
+                WHERE modelo_key = :modelo_key;
+            """),
+            {"modelo_key": modelo_key},
+        )
+
+        for chave, (_, alerta) in zip(
+            chaves_data,
+            alertas.iterrows(),
+        ):
+            alerta_key = obter_alerta_key(
+                connection,
+                alerta,
+            )
+
+            variacao = alerta["variacao_percent"]
+
+            connection.execute(
+                text(f"""
+                    INSERT INTO {DW_SCHEMA}.fact_alerta_previsao
+                        (data_key, modelo_key, alerta_key, variacao_percent)
+                    VALUES
+                        (:data_key, :modelo_key, :alerta_key, :variacao);
+                """),
+                {
+                    "data_key": chave,
+                    "modelo_key": modelo_key,
+                    "alerta_key": alerta_key,
+                    "variacao": (
+                        float(variacao)
+                        if pd.notna(variacao)
+                        else None
+                    ),
+                },
+            )
+
+
+def obter_alerta_key(
+    connection,
+    alerta,
+):
+    """Devolve a chave do alerta na dim_alerta_previsao, criando-a se for novo."""
+    parametros = {
+        "nivel": alerta["nivel"],
+        "tipo": alerta["tipo"],
+        "mensagem": alerta["mensagem"],
+    }
+
+    connection.execute(
+        text(f"""
+            INSERT INTO {DW_SCHEMA}.dim_alerta_previsao
+                (nivel, tipo, mensagem, ordem)
+            SELECT
+                :nivel,
+                :tipo,
+                :mensagem,
+                COALESCE(MAX(ordem), 0) + 1
+            FROM {DW_SCHEMA}.dim_alerta_previsao
+            ON CONFLICT (nivel, tipo, mensagem) DO NOTHING;
+        """),
+        parametros,
     )
+
+    return connection.execute(
+        text(f"""
+            SELECT alerta_key
+            FROM {DW_SCHEMA}.dim_alerta_previsao
+            WHERE nivel = :nivel
+              AND tipo = :tipo
+              AND mensagem = :mensagem;
+        """),
+        parametros,
+    ).scalar_one()
 
 
 def main():
@@ -330,7 +408,8 @@ def main():
     )
 
     guardar_alertas(
-        alertas
+        alertas,
+        int(metricas["modelo_key"]),
     )
 
     print(
@@ -366,7 +445,7 @@ def main():
     )
 
     print(
-        "dw.alertas_previsao"
+        f"{DW_SCHEMA}.fact_alerta_previsao"
     )
 
     print()

@@ -55,17 +55,45 @@ def transformar_dim_pagamento(vendas):
     return dim_pagamento
 
 
+# Período mínimo do calendário definido no modelo dimensional.
+CALENDARIO_INICIO = pd.Timestamp("2023-01-01")
+CALENDARIO_FIM = pd.Timestamp("2027-12-31")
+
+
 def transformar_dim_data(vendas):
-    """Cria a dimensão calendário a partir das datas das vendas."""
-    datas = vendas["data_venda"].dt.date.unique()
+    """Cria a dimensão calendário com todos os dias do período analisado.
+
+    O calendário vai de 01/01/2023 a 31/12/2027 e é alargado se houver
+    vendas fora desse período ou se o ano seguinte ao atual ficar de fora,
+    para que as previsões e as fotografias de stock tenham sempre data.
+    As colunas calculadas (mes_abrev, ano_mes, ...) são geradas pela base
+    de dados e não são enviadas.
+    """
+    datas_vendas = pd.to_datetime(
+        vendas["data_venda"]
+    ).dt.tz_localize(None).dt.normalize()
+
+    fim_ano_seguinte = pd.Timestamp(
+        year=pd.Timestamp.today().year + 1,
+        month=12,
+        day=31,
+    )
+
+    inicio = min(
+        [CALENDARIO_INICIO]
+        + ([datas_vendas.min()] if not datas_vendas.empty else [])
+    )
+
+    fim = max(
+        [CALENDARIO_FIM, fim_ano_seguinte]
+        + ([datas_vendas.max()] if not datas_vendas.empty else [])
+    )
 
     dim_data = pd.DataFrame(
         {
-            "data": pd.to_datetime(datas)
+            "data": pd.date_range(inicio, fim, freq="D")
         }
     )
-
-    dim_data = dim_data.sort_values("data").reset_index(drop=True)
 
     dim_data["data_key"] = (
         dim_data["data"]
@@ -176,15 +204,23 @@ def transformar_dim_genero(generos):
 def transformar_fact_vendas(
     vendas,
     itens_venda,
+    livro_autores,
+    livro_generos,
     dim_cliente,
     dim_livro,
+    dim_autor,
+    dim_genero,
     dim_pagamento,
     dim_data,
 ):
-    """Relaciona itens de venda com as chaves das dimensões.
+    """Constrói a tabela de factos com o grão item de venda x autor x género.
 
-    Apenas vendas concluídas são incluídas. A função interrompe a carga
-    se algum livro, pagamento ou data não tiver correspondência.
+    Apenas vendas concluídas são incluídas. Cada item é repetido por cada
+    combinação autor x género do livro e o seu valor é repartido pelo peso
+    1 / (n.º de autores x n.º de géneros), por isso as somas não duplicam.
+    Livros sem autor ou sem género ficam ligados aos membros 0
+    («Sem autor» / «Sem género»). A função interrompe a carga se algum
+    livro, autor, género, pagamento ou data não tiver correspondência.
     """
     # Mantém apenas vendas concluídas
     vendas_concluidas = vendas[
@@ -316,29 +352,88 @@ def transformar_fact_vendas(
     fact["livro_key"] = fact["livro_key"].astype("int64")
     fact["pagamento_key"] = fact["pagamento_key"].astype("int64")
 
+    # Autores e géneros de cada livro, já com as chaves do Data Warehouse
+    autores_livro = relacionar_livro_autor(
+        livro_autores,
+        dim_livro,
+        dim_autor,
+    )
+
+    generos_livro = relacionar_livro_genero(
+        livro_generos,
+        dim_livro,
+        dim_genero,
+    )
+
+    # Repete cada item por autor e por género (sem autor/género -> membro 0)
+    fact = fact.merge(
+        autores_livro,
+        on="livro_key",
+        how="left",
+    )
+
+    fact = fact.merge(
+        generos_livro,
+        on="livro_key",
+        how="left",
+    )
+
+    fact["autor_key"] = fact["autor_key"].fillna(0).astype("int64")
+    fact["genero_key"] = fact["genero_key"].fillna(0).astype("int64")
+
+    # Peso de cada linha: 1 / (n.º de autores x n.º de géneros do livro)
+    linhas_por_item = fact.groupby(
+        "item_venda_id_origem"
+    )["item_venda_id_origem"].transform("size")
+
+    fact["peso"] = 1 / linhas_por_item
+
+    fact["quantidade_atribuida"] = (
+        fact["quantidade"] * fact["peso"]
+    )
+
+    fact["receita_atribuida"] = (
+        fact["subtotal"].astype(float) * fact["peso"]
+    )
+
     # Mantém apenas as colunas da tabela de factos
     fact = fact[
         [
             "data_key",
             "cliente_key",
             "livro_key",
+            "autor_key",
+            "genero_key",
             "pagamento_key",
             "venda_id_origem",
             "item_venda_id_origem",
-            "quantidade",
             "preco_unitario",
-            "subtotal",
+            "peso",
+            "quantidade_atribuida",
+            "receita_atribuida",
         ]
     ]
 
+    fact = fact.sort_values(
+        [
+            "item_venda_id_origem",
+            "autor_key",
+            "genero_key",
+        ]
+    ).reset_index(drop=True)
+
     return fact
 
-def transformar_bridge_livro_autor(
+def relacionar_livro_autor(
     livro_autores,
     dim_livro,
     dim_autor,
 ):
-    """Relaciona cada livro com os autores através das chaves dimensionais."""
+    """Relaciona cada livro com os autores através das chaves dimensionais.
+
+    Já não é carregada como tabela bridge: serve para repetir cada item da
+    fact_vendas por autor.
+    """
     # Liga os IDs originais às chaves do Data Warehouse
     bridge = livro_autores.merge(
         dim_livro[
@@ -387,12 +482,16 @@ def transformar_bridge_livro_autor(
     ].drop_duplicates()
 
 
-def transformar_bridge_livro_genero(
+def relacionar_livro_genero(
     livro_generos,
     dim_livro,
     dim_genero,
 ):
-    """Relaciona cada livro com os géneros através das chaves dimensionais."""
+    """Relaciona cada livro com os géneros através das chaves dimensionais.
+
+    Já não é carregada como tabela bridge: serve para repetir cada item da
+    fact_vendas por género.
+    """
     # Liga os IDs originais às chaves do Data Warehouse
     bridge = livro_generos.merge(
         dim_livro[

@@ -139,6 +139,8 @@ A configuração existente inclui as seguintes variáveis:
 | `PGUSER` | Utilizador da base de dados. |
 | `PGPASSWORD` | Palavra-passe do utilizador. |
 | `DATABASE_URL` | URL completa utilizada pela aplicação para estabelecer a ligação à base de dados. |
+| `DW_SCHEMA` | Opcional. Esquema do Data Warehouse usado pelo ETL, pelas análises e pela aplicação (por omissão, `dw`). Permite testar num esquema separado, por exemplo `dw_teste`. |
+| `SABIN_DATA_REFERENCIA` | Opcional, só para testes. Data (AAAA-MM-DD) usada como «hoje» na análise de stock e na previsão. |
 
 O ficheiro `.env` deve estar na pasta principal do projeto, ao mesmo nível de `app.py`.
 
@@ -153,6 +155,10 @@ A aplicação necessita de uma base de dados PostgreSQL acessível e com a estru
 Os scripts SQL encontram-se organizados no diretório `database/`. A estrutura relacional, o modelo dimensional, as migrações e as consultas de validação devem ser consultados de acordo com a finalidade de cada script.
 
 Antes de executar scripts de criação ou de inserção de dados, deve confirmar-se a sua finalidade e o ambiente de destino.
+
+O Data Warehouse segue o modelo dimensional definido pelo professor orientador (`Def_Schema_SABIN.sql`): seis dimensões de negócio (`dim_data`, `dim_cliente`, `dim_livro`, `dim_autor`, `dim_genero`, `dim_pagamento`), três dimensões de apoio (`dim_nivel_stock`, `dim_modelo_previsao`, `dim_alerta_previsao`) e quatro factos (`fact_vendas`, `fact_stock`, `fact_previsao`, `fact_alerta_previsao`). A `fact_vendas` tem o grão item de venda × autor × género, e o valor de cada item é repartido pelo `peso`. O ficheiro `database/dimensional/01_data_warehouse.sql` descreve o modelo anterior, com tabelas *bridge*, e já não é usado.
+
+O ETL (`etl/load.py`) limpa e volta a carregar as dimensões de negócio e a `fact_vendas` numa única transação. Mantém o calendário e as fotografias de stock dos dias anteriores, e no fim compara o resultado com a base operacional. Se algum valor não coincidir, a carga é anulada.
 
 ### 6.7. Executar a aplicação
 

@@ -92,6 +92,19 @@ def executar_atualizacao_analitica():
         )
     )
 
+    # Volta a gravar a fotografia de stock do dia depois do ETL, para incluir
+    # livros novos que só passam a existir na dim_livro depois da carga.
+    resultados.append(
+        executar_comando(
+            [
+                sys.executable,
+                "-m",
+                "analysis.stock_alerts",
+            ],
+            "Alertas de stock",
+        )
+    )
+
     resultados.append(
         executar_comando(
             [

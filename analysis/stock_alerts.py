@@ -5,6 +5,13 @@ import pandas as pd
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 
+from analysis.dw_consultas import (
+    DW_SCHEMA,
+    data_key,
+    obter_data_referencia_sql,
+    verificar_datas,
+)
+
 
 load_dotenv()
 
@@ -29,12 +36,16 @@ MESES_STOCK_ALVO = 3
 def obter_data_referencia():
     """Obtém a data usada como referência para analisar o stock."""
     query = text("""
-        SELECT CURRENT_DATE AS data_referencia;
+        SELECT COALESCE(
+            CAST(:data_referencia AS date),
+            CURRENT_DATE
+        ) AS data_referencia;
     """)
 
     with engine.connect() as connection:
         resultado = connection.execute(
-            query
+            query,
+            {"data_referencia": obter_data_referencia_sql()},
         ).mappings().one()
 
     return pd.Timestamp(
@@ -313,7 +324,13 @@ def gerar_alertas_stock():
 
 
 def guardar_alertas_stock(dados):
-    """Guarda os alertas de stock para consulta e análise."""
+    """Guarda os alertas de stock para consulta e análise.
+
+    No Data Warehouse, grava uma fotografia por dia na fact_stock (grão
+    livro x data): a fotografia do mesmo dia é substituída e as dos dias
+    anteriores mantêm-se. Livros que ainda não estão na dim_livro (por
+    exemplo, acabados de criar) só entram depois da próxima execução do ETL.
+    """
     os.makedirs(
         "outputs",
         exist_ok=True,
@@ -325,13 +342,97 @@ def guardar_alertas_stock(dados):
         encoding="utf-8-sig",
     )
 
-    dados.to_sql(
-        "alertas_stock",
-        engine,
-        schema="dw",
-        if_exists="replace",
-        index=False,
+    if dados.empty:
+        return 0
+
+    chave_data = data_key(
+        dados.iloc[0]["data_referencia"]
     )
+
+    with engine.begin() as connection:
+        verificar_datas(
+            connection,
+            [chave_data],
+        )
+
+        livros = pd.read_sql(
+            text(f"""
+                SELECT livro_key, livro_id_origem AS livro_id
+                FROM {DW_SCHEMA}.dim_livro;
+            """),
+            connection,
+        )
+
+        niveis = pd.read_sql(
+            text(f"""
+                SELECT nivel_key, nivel
+                FROM {DW_SCHEMA}.dim_nivel_stock;
+            """),
+            connection,
+        )
+
+        fact = dados.merge(
+            livros,
+            on="livro_id",
+            how="inner",
+            validate="one_to_one",
+        ).merge(
+            niveis,
+            on="nivel",
+            how="left",
+            validate="many_to_one",
+        )
+
+        if fact["nivel_key"].isna().any():
+            raise ValueError(
+                "Existem níveis de stock sem correspondência "
+                "na dim_nivel_stock."
+            )
+
+        sem_livro = len(dados) - len(fact)
+
+        if sem_livro:
+            print(
+                f"Aviso: {sem_livro} livro(s) ainda não estão na "
+                "dim_livro e ficam para a próxima execução do ETL."
+            )
+
+        fact["data_key"] = chave_data
+        fact["nivel_key"] = fact["nivel_key"].astype("int64")
+
+        fact = fact[
+            [
+                "data_key",
+                "livro_key",
+                "nivel_key",
+                "estoque_atual",
+                "qtd_reservada",
+                "stock_disponivel",
+                "unidades_ultimos_3_meses",
+                "media_mensal_vendas",
+                "meses_cobertura",
+                "quantidade_recomendada",
+                "preco_venda",
+            ]
+        ]
+
+        connection.execute(
+            text(f"""
+                DELETE FROM {DW_SCHEMA}.fact_stock
+                WHERE data_key = :data_key;
+            """),
+            {"data_key": chave_data},
+        )
+
+        fact.to_sql(
+            "fact_stock",
+            connection,
+            schema=DW_SCHEMA,
+            if_exists="append",
+            index=False,
+        )
+
+    return len(fact)
 
 
 def main():
@@ -345,7 +446,7 @@ def main():
         gerar_alertas_stock()
     )
 
-    guardar_alertas_stock(
+    gravados = guardar_alertas_stock(
         dados
     )
 
@@ -466,11 +567,13 @@ def main():
             print()
 
     print(
-        "Tabela criada:"
+        "Tabela atualizada:"
     )
 
     print(
-        "dw.alertas_stock"
+        f"{DW_SCHEMA}.fact_stock "
+        f"({gravados} livro(s) em "
+        f"{data_fim.strftime('%d/%m/%Y')})"
     )
 
     print()

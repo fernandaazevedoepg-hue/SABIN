@@ -1,18 +1,26 @@
 import pandas as pd
 
-from etl.extract import engine
+from etl.extract import DW_SCHEMA, engine
 
 
 def carregar_vendas_dw():
-    """Carrega do Data Warehouse os dados necessários aos indicadores."""
-    query = """
+    """Carrega do Data Warehouse os dados necessários aos indicadores.
+
+    A fact_vendas tem uma linha por item x autor x género. As linhas de cada
+    item são somadas (os pesos somam 1), para voltar a ter uma linha por item
+    de venda, com a quantidade e o subtotal originais.
+    """
+    query = f"""
     SELECT
         venda_id_origem,
         item_venda_id_origem,
-        quantidade,
-        preco_unitario,
-        subtotal
-    FROM dw.fact_vendas;
+        ROUND(SUM(quantidade_atribuida))::integer AS quantidade,
+        MAX(preco_unitario) AS preco_unitario,
+        ROUND(SUM(receita_atribuida), 2) AS subtotal
+    FROM {DW_SCHEMA}.fact_vendas
+    GROUP BY
+        venda_id_origem,
+        item_venda_id_origem;
     """
 
     return pd.read_sql(query, engine)

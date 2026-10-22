@@ -23,6 +23,14 @@ from dash import (
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 
+from analysis.dw_consultas import (
+    DW_SCHEMA,
+    SQL_ALERTAS_PREVISAO,
+    SQL_STOCK_ATUAL,
+    carregar_metricas_previsao as carregar_metricas_previsao_dw,
+    carregar_previsao_receita as carregar_previsao_receita_dw,
+)
+
 from services.book_catalog import procurar_livro
 from services.sales_service import (
     METODOS_PAGAMENTO,
@@ -148,9 +156,9 @@ def _contar_vendas_operacionais():
 
 
 def _contar_vendas_dw():
-    query = text("""
+    query = text(f"""
         SELECT COUNT(DISTINCT venda_id_origem) AS total
-        FROM dw.fact_vendas;
+        FROM {DW_SCHEMA}.fact_vendas;
     """)
 
     try:
@@ -194,12 +202,12 @@ def carregar_kpis():
             WHERE LOWER(TRIM(COALESCE(v.status, ''))) LIKE 'conclu%';
         """)
     else:
-        query = text("""
+        query = text(f"""
             SELECT
-                COALESCE(SUM(subtotal), 0) AS receita_total,
+                COALESCE(ROUND(SUM(receita_atribuida), 2), 0) AS receita_total,
                 COUNT(DISTINCT venda_id_origem) AS numero_vendas,
-                COALESCE(SUM(quantidade), 0) AS unidades_vendidas
-            FROM dw.fact_vendas;
+                COALESCE(ROUND(SUM(quantidade_atribuida)), 0) AS unidades_vendidas
+            FROM {DW_SCHEMA}.fact_vendas;
         """)
 
     with engine.connect() as connection:
@@ -253,15 +261,15 @@ def carregar_receita_mensal():
             ORDER BY 1;
         """)
     else:
-        query = text("""
+        query = text(f"""
             SELECT
                 DATE_TRUNC(
                     'month',
                     d.data
                 )::date AS mes,
-                SUM(f.subtotal) AS receita
-            FROM dw.fact_vendas f
-            JOIN dw.dim_data d
+                ROUND(SUM(f.receita_atribuida), 2) AS receita
+            FROM {DW_SCHEMA}.fact_vendas f
+            JOIN {DW_SCHEMA}.dim_data d
                 ON d.data_key = f.data_key
             GROUP BY 1
             ORDER BY 1;
@@ -299,12 +307,12 @@ def carregar_top_livros():
             LIMIT 5;
         """)
     else:
-        query = text("""
+        query = text(f"""
             SELECT
                 l.titulo,
-                SUM(f.quantidade) AS unidades_vendidas
-            FROM dw.fact_vendas f
-            JOIN dw.dim_livro l
+                ROUND(SUM(f.quantidade_atribuida))::integer AS unidades_vendidas
+            FROM {DW_SCHEMA}.fact_vendas f
+            JOIN {DW_SCHEMA}.dim_livro l
                 ON l.livro_key = f.livro_key
             GROUP BY l.titulo
             ORDER BY unidades_vendidas DESC
@@ -412,40 +420,16 @@ def parece_isbn(valor):
 
 def carregar_metricas_previsao():
     """Carrega as métricas que permitem avaliar o modelo de previsão."""
-    query = text("""
-        SELECT *
-        FROM dw.metricas_previsao
-        LIMIT 1;
-    """)
-
-    with engine.connect() as connection:
-        resultado = connection.execute(
-            query
-        ).mappings().first()
-
-    if not resultado:
-        return None
-
-    return dict(resultado)
+    return carregar_metricas_previsao_dw(
+        engine
+    )
 
 
 def carregar_previsao_receita():
     """Carrega os valores de receita previstos para os próximos meses."""
-    query = text("""
-        SELECT
-            mes,
-            receita_real,
-            receita_prevista,
-            tipo
-        FROM dw.previsao_receita
-        ORDER BY mes;
-    """)
-
-    with engine.connect() as connection:
-        dados = pd.read_sql(
-            query,
-            connection,
-        )
+    dados = carregar_previsao_receita_dw(
+        engine
+    )
 
     dados["mes"] = pd.to_datetime(
         dados["mes"]
@@ -456,14 +440,14 @@ def carregar_previsao_receita():
 
 def carregar_alertas_previsao():
     """Carrega os alertas gerados a partir das previsões."""
-    query = text("""
+    query = text(f"""
         SELECT
             periodo,
             nivel,
             tipo,
             mensagem,
             variacao_percent
-        FROM dw.alertas_previsao
+        FROM ({SQL_ALERTAS_PREVISAO}) alertas_previsao
         ORDER BY
             periodo,
             CASE
@@ -492,7 +476,7 @@ def carregar_alertas_previsao():
 
 def carregar_alertas_stock():
     """Carrega os alertas relacionados com o stock."""
-    query = text("""
+    query = text(f"""
         SELECT
             titulo,
             estoque_atual,
@@ -504,7 +488,7 @@ def carregar_alertas_stock():
             quantidade_recomendada,
             nivel,
             recomendacao
-        FROM dw.alertas_stock
+        FROM ({SQL_STOCK_ATUAL}) alertas_stock
         ORDER BY
             CASE
                 WHEN nivel = 'Crítico' THEN 1
@@ -526,7 +510,7 @@ def carregar_alertas_stock():
 
 def carregar_stock_completo():
     """Carrega a informação detalhada do stock dos livros."""
-    query = text("""
+    query = text(f"""
         SELECT
             l.id,
             l.titulo,
@@ -541,7 +525,7 @@ def carregar_stock_completo():
             a.meses_cobertura,
             a.nivel
         FROM public.livros l
-        LEFT JOIN dw.alertas_stock a
+        LEFT JOIN ({SQL_STOCK_ATUAL}) a
             ON a.livro_id = l.id
         ORDER BY
             CASE

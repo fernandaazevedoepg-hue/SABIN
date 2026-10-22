@@ -1,4 +1,5 @@
 import os
+import re
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -13,6 +14,16 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError(
         "DATABASE_URL não foi encontrada no ficheiro .env"
+    )
+
+
+# Esquema do Data Warehouse. Por omissão é o dw; pode apontar-se para um
+# esquema de teste (ex.: DW_SCHEMA=dw_teste) sem alterar o código.
+DW_SCHEMA = os.getenv("DW_SCHEMA", "dw")
+
+if not re.fullmatch(r"[a-z_][a-z0-9_]*", DW_SCHEMA):
+    raise RuntimeError(
+        f"DW_SCHEMA inválido: {DW_SCHEMA!r}"
     )
 
 
