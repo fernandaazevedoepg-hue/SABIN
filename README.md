@@ -214,7 +214,9 @@ O Power BI Desktop liga-se ao Supabase com encriptação e, no Windows, só acei
 
 O certificado está na pasta `certificados/` (`prod-ca-2021.crt`, «Supabase Root 2021 CA», válido até 26/04/2031). É um certificado público e não contém credenciais.
 
-Para o instalar:
+Ao executar `python app.py` no Windows, a aplicação verifica se o certificado já está instalado e, se faltar, instala-o automaticamente. O Windows pede uma única confirmação, à qual se responde **Sim**. Isto não acontece na versão online (Render).
+
+Para o instalar sem executar a aplicação (por exemplo, para abrir apenas o `sabin.pbix`):
 
 1. Abrir a pasta `certificados/` no Explorador de Ficheiros.
 2. Fazer duplo clique em `instalar_certificado.bat` e carregar em **Sim** quando o Windows pedir confirmação.

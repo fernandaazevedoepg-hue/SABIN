@@ -6473,6 +6473,10 @@ def atualizar_carrinho(
 
 
 if __name__ == "__main__":
+    from services.certificado_service import garantir_certificado_supabase
+
+    garantir_certificado_supabase()
+
     app.run(
         host="0.0.0.0",
         port=int(os.getenv("PORT", "8050")),
