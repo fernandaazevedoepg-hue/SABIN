@@ -270,11 +270,32 @@ def normalizar_texto(valor):
     ).strip()
 
 
+# Partículas que ficam em minúsculas quando um nome vem todo em maiúsculas.
+PARTICULAS_NOME = {"de", "da", "do", "das", "dos", "e", "del", "van", "von"}
+
+
 def limpar_autor(nome):
     nome = limpar_texto(nome)
 
     if not nome:
         return None
+
+    # Remove rótulos que algumas páginas juntam ao nome («/Autora: ...»).
+    nome = re.sub(
+        r"^[\W_]*(?:(?:autor(?:a|es|as)?|author|escrito\s+por|by)\s*:\s*)?",
+        "",
+        nome,
+        flags=re.I,
+    )
+
+    # «MARGARET ATWOOD» -> «Margaret Atwood».
+    if nome.isupper():
+        nome = " ".join(
+            parte.lower()
+            if indice and parte.lower() in PARTICULAS_NOME
+            else parte.capitalize()
+            for indice, parte in enumerate(nome.split())
+        )
 
     nome = re.sub(
         r"\s*\((?:autor|autora|author|writer)\)\s*",
@@ -404,10 +425,60 @@ def limpar_editora(editora):
     if compacto in conhecidos:
         return conhecidos[compacto]
 
+    # Uma distribuidora não é a editora do livro.
+    if "distribui" in compacto:
+        return None
+
     if len(editora) > 90:
         return None
 
+    # Algumas páginas web têm o preço junto ao rótulo «Editor»; um preço
+    # ou um valor sem letras não é uma editora.
+    if (
+        re.search(r"[€$£]|\b(?:EUR|USD|BRL)\b|\bR\$", editora, flags=re.I)
+        or re.fullmatch(r"[\d\s.,]+", editora)
+        or not re.search(r"[A-Za-zÀ-ÿ]{2,}", editora)
+    ):
+        return None
+
     return editora
+
+
+def normalizar_preco(valor):
+    """Converte um preço («18,80 €», «€18.80», 18.8) num número com 2 casas, ou None."""
+    if valor is None:
+        return None
+    if isinstance(valor, (int, float)):
+        numero = float(valor)
+    else:
+        encontrado = re.search(r"(\d{1,4}(?:[.,]\d{1,2})?)", str(valor))
+        if not encontrado:
+            return None
+        numero = float(encontrado.group(1).replace(",", "."))
+    # Preços de livros fora deste intervalo são quase sempre erros de leitura.
+    if not 1 <= numero <= 500:
+        return None
+    return round(numero, 2)
+
+
+def extrair_pvp(texto):
+    """Procura o PVP (preço de venda ao público) no texto de uma página."""
+    if not texto:
+        return None
+    padroes = [
+        r"PVP\s*:?\s*€?\s*(\d{1,4}[.,]\d{2})\s*€?",
+        r"Pre[cç]o(?:\s+de\s+capa|\s+fixo)?\s*:?\s*€\s*(\d{1,4}[.,]\d{2})",
+        r"Pre[cç]o(?:\s+de\s+capa|\s+fixo)?\s*:?\s*(\d{1,4}[.,]\d{2})\s*€",
+        r"€\s*(\d{1,4}[.,]\d{2})",
+        r"(\d{1,4},\d{2})\s*€",
+    ]
+    for padrao in padroes:
+        encontrado = re.search(padrao, texto, flags=re.I)
+        if encontrado:
+            preco = normalizar_preco(encontrado.group(1))
+            if preco:
+                return preco
+    return None
 
 
 def limpar_titulo(titulo, isbn=None, autores=None):
@@ -663,6 +734,33 @@ def procurar_livro_local(isbn):
     }
 
 
+# Prefixos de editoras portuguesas no ISBN (978-972-...). O prefixo
+# identifica a editora que registou o ISBN, por isso é mais fiável do que
+# o texto de uma página web, onde às vezes aparece a distribuidora.
+PREFIXOS_EDITORAS = {
+    "9789720": "Porto Editora",
+    "97897220": "Publicações Dom Quixote",
+    "97897221": "Caminho",
+    "97897223": "Editorial Presença",
+    "97897225": "Bertrand Editora",
+    "978972708": "Relógio D'Água",
+}
+
+
+def editora_por_prefixo(isbn):
+    """Devolve a editora associada ao prefixo do ISBN, quando é conhecida."""
+    isbn = normalizar_isbn(isbn)
+
+    if len(isbn) == 10:
+        isbn = "978" + isbn[:9]
+
+    for prefixo in sorted(PREFIXOS_EDITORAS, key=len, reverse=True):
+        if isbn.startswith(prefixo):
+            return PREFIXOS_EDITORAS[prefixo]
+
+    return None
+
+
 def get_json(url, params):
     """Faz um pedido HTTP a uma API e devolve a resposta em formato JSON."""
     resposta = session.get(
@@ -673,6 +771,16 @@ def get_json(url, params):
 
     resposta.raise_for_status()
     return resposta.json()
+
+
+def preco_google_books(item):
+    """Preço de tabela em euros indicado pelo Google Books, quando existe."""
+    venda = item.get("saleInfo") or {}
+    for chave in ("listPrice", "retailPrice"):
+        preco = venda.get(chave) or {}
+        if preco.get("currencyCode") == "EUR":
+            return normalizar_preco(preco.get("amount"))
+    return None
 
 
 def procurar_google_books(isbn):
@@ -728,6 +836,7 @@ def procurar_google_books(isbn):
                 "isbn": isbn,
                 "autores": autores,
                 "editora": limpar_editora(info.get("publisher")),
+                "preco": preco_google_books(item),
                 "data_publicacao": normalizar_data(info.get("publishedDate")),
                 "generos": mapear_generos(info.get("categories") or []),
             }
@@ -1053,6 +1162,13 @@ def extrair_json_ld(html, isbn):
                 or atual.get("brand")
             )
 
+            ofertas = atual.get("offers") or {}
+            if isinstance(ofertas, list):
+                ofertas = ofertas[0] if ofertas else {}
+            preco = None
+            if isinstance(ofertas, dict) and ofertas.get("priceCurrency", "EUR") == "EUR":
+                preco = normalizar_preco(ofertas.get("price") or ofertas.get("lowPrice"))
+
             resultados.append(
                 {
                     "titulo": atual.get("name") or atual.get("headline"),
@@ -1061,6 +1177,7 @@ def extrair_json_ld(html, isbn):
                         or atual.get("creator")
                     ),
                     "editora": editoras[0] if editoras else None,
+                    "preco": preco,
                     "data_publicacao": (
                         atual.get("datePublished")
                         or atual.get("releaseDate")
@@ -1181,6 +1298,7 @@ def extrair_pagina_html(url, isbn):
     editora = dados.get("editora")
     data_publicacao = dados.get("data_publicacao")
     generos = dados.get("generos") or []
+    preco = dados.get("preco") or extrair_pvp(texto)
 
     if not titulo:
         h1 = re.search(
@@ -1258,6 +1376,7 @@ def extrair_pagina_html(url, isbn):
         "isbn": isbn,
         "autores": autores,
         "editora": limpar_editora(editora),
+        "preco": preco,
         "data_publicacao": normalizar_data(data_publicacao),
         "generos": mapear_generos(generos),
     }
@@ -1354,6 +1473,7 @@ def extrair_pagina_reader(url, isbn):
         "isbn": isbn,
         "autores": autores,
         "editora": limpar_editora(editora),
+        "preco": extrair_pvp(texto),
         "data_publicacao": normalizar_data(data_publicacao),
         "generos": mapear_generos(
             [genero]
@@ -1508,10 +1628,15 @@ def pesquisar_web(isbn, titulo=None, autores=None):
             if dados:
                 fontes.append(dados)
 
-    if fontes:
+    # Se as páginas já trazem editora e géneros, não é preciso o Reader.
+    if (
+        any(fonte.get("editora") for fonte in fontes)
+        and any(fonte.get("generos") for fonte in fontes)
+    ):
         return fontes
 
-    # Usa o Reader como alternativa e limita o número de páginas consultadas.
+    # Usa o Reader como alternativa (ou complemento, quando faltam a editora
+    # ou os géneros) e limita o número de páginas consultadas.
     with ThreadPoolExecutor(
         max_workers=min(3, len(urls) or 1)
     ) as executor:
@@ -1565,6 +1690,7 @@ def mesclar_fontes(fontes, isbn):
     titulo = None
     autores = []
     editora = None
+    preco = None
     data_publicacao = None
     generos = []
 
@@ -1590,6 +1716,12 @@ def mesclar_fontes(fontes, isbn):
 
             if editora:
                 fontes_campos["editora"] = fonte["origem"]
+
+        if not preco and fonte.get("preco"):
+            preco = normalizar_preco(fonte["preco"])
+
+            if preco:
+                fontes_campos["preco"] = fonte["origem"]
 
         if not data_publicacao and fonte.get("data_publicacao"):
             data_publicacao = normalizar_data(
@@ -1620,6 +1752,10 @@ def mesclar_fontes(fontes, isbn):
     for fonte in fontes:
         origem = fonte.get("origem")
 
+        # O prefixo do ISBN só completa a editora; não é mostrado como fonte.
+        if origem == "Prefixo do ISBN":
+            continue
+
         if origem and origem not in origens:
             origens.append(origem)
 
@@ -1630,6 +1766,7 @@ def mesclar_fontes(fontes, isbn):
         "isbn": isbn,
         "autores": autores,
         "editora": editora,
+        "preco": preco,
         "data_publicacao": data_publicacao,
         "generos": generos[:3],
         "fontes_campos": fontes_campos,
@@ -1647,6 +1784,7 @@ def faltam_campos(resultado):
             "titulo",
             "autores",
             "editora",
+            "preco",
             "data_publicacao",
             "generos",
         )
@@ -1689,6 +1827,18 @@ def procurar_externo_cache(isbn):
 
             if resultado and resultado.get("sucesso"):
                 fontes.append(resultado)
+
+    editora_prefixo = editora_por_prefixo(isbn)
+
+    if editora_prefixo:
+        fontes.append(
+            {
+                "sucesso": True,
+                "origem": "Prefixo do ISBN",
+                "prioridade": 95,
+                "editora": editora_prefixo,
+            }
+        )
 
     combinado = mesclar_fontes(
         fontes,

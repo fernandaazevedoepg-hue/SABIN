@@ -2911,3 +2911,33 @@ body {
 .management-catalog-panel .catalog-table td:nth-child(6) {
     white-space: nowrap;
 }
+
+/* Caixas lado a lado com a mesma altura e históricos com scroll */
+
+.sabin-modal .sale-layout {
+    align-items: stretch;
+}
+
+.sabin-modal .sale-layout > .sale-form-panel {
+    margin-bottom: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.management-history-grid {
+    align-items: stretch;
+}
+
+#management-stock-history,
+#management-price-history {
+    max-height: 420px;
+    overflow-y: auto;
+}
+
+#management-stock-history .sale-cart-table thead th,
+#management-price-history .sale-cart-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}

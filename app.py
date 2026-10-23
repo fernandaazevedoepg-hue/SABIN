@@ -433,22 +433,6 @@ def carregar_generos():
     return dados["nome"].tolist()
 
 
-def parece_isbn(valor):
-    """Verifica se o texto tem o formato esperado de um ISBN."""
-    if not valor:
-        return False
-
-    isbn = re.sub(
-        r"[^0-9Xx]",
-        "",
-        valor,
-    )
-
-    return len(isbn) in [10, 13]
-
-
-# Previsões
-
 def carregar_metricas_previsao():
     """Carrega as métricas que permitem avaliar o modelo de previsão."""
     return carregar_metricas_previsao_dw(
@@ -965,92 +949,6 @@ def criar_tabela_catalogo(dados, com_acoes=False):
     )
 
 
-def criar_resultado_externo(
-    resultado,
-    autores,
-):
-    return html.Div(
-        className="external-result-card",
-        children=[
-            html.Div(
-                className="external-result-header",
-                children=[
-                    html.Div(
-                        children=[
-                            html.P(
-                                "Livro não encontrado no catálogo local",
-                                className="external-result-label",
-                            ),
-                            html.H3(
-                                resultado.get(
-                                    "titulo",
-                                    "Sem título",
-                                )
-                            ),
-                        ]
-                    ),
-                    html.Span(
-                        "Open Library API",
-                        className="origin-badge api",
-                    ),
-                ],
-            ),
-            html.Div(
-                className="result-grid",
-                children=[
-                    html.Div(
-                        className="result-item",
-                        children=[
-                            html.Span("ISBN"),
-                            html.Strong(
-                                resultado.get(
-                                    "isbn",
-                                    "—",
-                                )
-                            ),
-                        ],
-                    ),
-                    html.Div(
-                        className="result-item",
-                        children=[
-                            html.Span("Autor"),
-                            html.Strong(
-                                autores
-                            ),
-                        ],
-                    ),
-                    html.Div(
-                        className="result-item",
-                        children=[
-                            html.Span("Editora"),
-                            html.Strong(
-                                resultado.get(
-                                    "editora"
-                                )
-                                or "—"
-                            ),
-                        ],
-                    ),
-                    html.Div(
-                        className="result-item",
-                        children=[
-                            html.Span("Data de Publicação"),
-                            html.Strong(
-                                str(
-                                    resultado.get(
-                                        "data_publicacao"
-                                    )
-                                    or "—"
-                                )
-                            ),
-                        ],
-                    ),
-                ],
-            ),
-        ],
-    )
-
-
 def criar_tabela_alertas(dados):
     linhas = []
 
@@ -1330,11 +1228,6 @@ def criar_sidebar():
                         id="submenu-analises",
                         className="submenu collapsed",
                         children=[
-                            html.Button(
-                                "Catálogo",
-                                id="btn-catalogo",
-                                className="submenu-button",
-                            ),
                             html.Button(
                                 "Previsões",
                                 id="btn-previsoes",
@@ -2561,7 +2454,6 @@ def pagina_gestao_catalogo():
                                 children=[
                                     html.Div(
                                         children=[
-                                            html.H3("Adicionar Novo Livro"),
                                             html.P(
                                                 "Regista um novo título no catálogo da Bookmarked.",
                                                 className="form-help",
@@ -2987,111 +2879,6 @@ def pagina_reservas():
 
 
 # Página Catálogo
-
-def pagina_catalogo():
-    """Constrói a página de consulta do catálogo de livros."""
-    catalogo = carregar_catalogo_local()
-    generos = carregar_generos()
-
-    opcoes_generos = [
-        {
-            "label": "Todos os géneros",
-            "value": "todos",
-        }
-    ]
-
-    for genero in generos:
-        opcoes_generos.append(
-            {
-                "label": genero,
-                "value": genero,
-            }
-        )
-
-    return html.Div(
-        children=[
-            html.Div(
-                className="page-header",
-                children=[
-                    html.H2("Catálogo"),
-                    html.P(
-                        "Consulta e pesquisa dos livros disponíveis na Bookmarked"
-                    ),
-                ],
-            ),
-            html.Div(
-                className="catalog-local-panel",
-                children=[
-                    html.Div(
-                        className="catalog-section-header",
-                        children=[
-                            html.Div(
-                                children=[
-                                    html.H3(
-                                        "Catálogo da Bookmarked"
-                                    ),
-                                    html.P(
-                                        "Pesquisa por título, autor ou ISBN e filtra por género."
-                                    ),
-                                ]
-                            ),
-                            html.Div(
-                                id="catalog-count",
-                                className="catalog-count",
-                                children=(
-                                    f"{len(catalogo)} livros encontrados"
-                                ),
-                            ),
-                        ],
-                    ),
-                    html.Div(
-                        className="catalog-search-row",
-                        children=[
-                            dcc.Input(
-                                id="catalog-search",
-                                type="text",
-                                placeholder=(
-                                    "Pesquisar por título, autor ou ISBN..."
-                                ),
-                                className="catalog-search-input",
-                                debounce=False,
-                            ),
-                            dcc.Dropdown(
-                                id="catalog-genre",
-                                options=opcoes_generos,
-                                value="todos",
-                                clearable=False,
-                                searchable=True,
-                                className="catalog-genre-dropdown",
-                            ),
-                            html.Button(
-                                "Pesquisar",
-                                id="catalog-search-button",
-                                className=(
-                                    "primary-button "
-                                    "catalog-button"
-                                ),
-                            ),
-                        ],
-                    ),
-                    dcc.Loading(
-                        id="catalog-api-loading",
-                        type="circle",
-                        children=html.Div(
-                            id="catalog-api-message"
-                        ),
-                    ),
-                    html.Div(
-                        id="catalog-table-container",
-                        children=criar_tabela_catalogo(
-                            catalogo
-                        ),
-                    ),
-                ],
-            ),
-        ]
-    )
-
 
 # Página Previsões
 
@@ -4909,7 +4696,6 @@ def alternar_menu_analises(
     Input("btn-venda", "n_clicks"),
     Input("btn-reservas", "n_clicks"),
     Input("btn-gestao-catalogo", "n_clicks"),
-    Input("btn-catalogo", "n_clicks"),
     Input("btn-previsoes", "n_clicks"),
     Input("btn-stock", "n_clicks"),
     Input("btn-interpretacao-stock", "n_clicks"),
@@ -4921,7 +4707,6 @@ def guardar_pagina_atual(
     venda,
     reservas,
     gestao_catalogo,
-    catalogo,
     previsoes,
     stock,
     interpretacao_stock,
@@ -4932,7 +4717,6 @@ def guardar_pagina_atual(
         "btn-venda": "venda",
         "btn-reservas": "reservas",
         "btn-gestao-catalogo": "gestao-catalogo",
-        "btn-catalogo": "catalogo",
         "btn-previsoes": "previsoes",
         "btn-stock": "stock",
         "btn-interpretacao-stock": "interpretacao-stock",
@@ -4951,7 +4735,6 @@ def guardar_pagina_atual(
     Output("btn-venda", "className"),
     Output("btn-reservas", "className"),
     Output("btn-gestao-catalogo", "className"),
-    Output("btn-catalogo", "className"),
     Output("btn-previsoes", "className"),
     Output("btn-stock", "className"),
     Output("btn-interpretacao-stock", "className"),
@@ -4977,7 +4760,6 @@ def navegar(
             submenu_normal,
             submenu_normal,
             submenu_normal,
-            submenu_normal,
         )
 
     if pagina_atual == "reservas":
@@ -4986,7 +4768,6 @@ def navegar(
             visao_normal,
             submenu_normal,
             submenu_ativo,
-            submenu_normal,
             submenu_normal,
             submenu_normal,
             submenu_normal,
@@ -5005,28 +4786,12 @@ def navegar(
             submenu_normal,
             submenu_normal,
             submenu_normal,
-            submenu_normal,
-        )
-
-    if pagina_atual == "catalogo":
-        return (
-            pagina_catalogo(),
-            visao_normal,
-            submenu_normal,
-            submenu_normal,
-            submenu_normal,
-            submenu_ativo,
-            submenu_normal,
-            submenu_normal,
-            submenu_normal,
-            submenu_normal,
         )
 
     if pagina_atual == "previsoes":
         return (
             pagina_previsoes(),
             visao_normal,
-            submenu_normal,
             submenu_normal,
             submenu_normal,
             submenu_normal,
@@ -5044,7 +4809,6 @@ def navegar(
             submenu_normal,
             submenu_normal,
             submenu_normal,
-            submenu_normal,
             submenu_ativo,
             submenu_normal,
             submenu_normal,
@@ -5054,7 +4818,6 @@ def navegar(
         return (
             pagina_interpretacao_stock(),
             visao_normal,
-            submenu_normal,
             submenu_normal,
             submenu_normal,
             submenu_normal,
@@ -5074,14 +4837,12 @@ def navegar(
             submenu_normal,
             submenu_normal,
             submenu_normal,
-            submenu_normal,
             submenu_ativo,
         )
 
     return (
         pagina_visao_geral(),
         visao_ativo,
-        submenu_normal,
         submenu_normal,
         submenu_normal,
         submenu_normal,
@@ -5486,6 +5247,7 @@ def normalizar_data_api(valor):
     Output("new-book-date", "date"),
     Output("new-book-genres", "value"),
     Output("new-book-api-message", "children"),
+    Output("new-book-price", "value"),
     Input("new-book-isbn", "value"),
     prevent_initial_call=True,
 )
@@ -5506,6 +5268,7 @@ def preencher_novo_livro_por_isbn(isbn):
             None,
             [],
             "",
+            no_update,
         )
 
     try:
@@ -5528,6 +5291,7 @@ def preencher_novo_livro_por_isbn(isbn):
                 "Não foi possível consultar o ISBN agora. Podes preencher os dados manualmente.",
                 className="sale-neutral-message compact-message",
             ),
+            no_update,
         )
 
     if not resultado.get("sucesso"):
@@ -5541,6 +5305,7 @@ def preencher_novo_livro_por_isbn(isbn):
                 "ISBN não encontrado. Podes preencher os dados manualmente.",
                 className="sale-neutral-message compact-message",
             ),
+            no_update,
         )
 
     origem = resultado.get("origem")
@@ -5578,6 +5343,10 @@ def preencher_novo_livro_por_isbn(isbn):
         resultado.get("data_publicacao")
     )
 
+    # PVP encontrado na pesquisa: fica como sugestão e pode ser alterado.
+    pvp = resultado.get("preco")
+    preco_sugerido = f"{float(pvp):.2f}" if pvp else no_update
+
     if origem == "Base de Dados Local":
         return (
             titulo,
@@ -5589,6 +5358,7 @@ def preencher_novo_livro_por_isbn(isbn):
                 "Este ISBN já existe no catálogo.",
                 className="sale-error-message compact-message",
             ),
+            no_update,
         )
 
     nome_origem = origem or "fonte externa"
@@ -5628,6 +5398,9 @@ def preencher_novo_livro_por_isbn(isbn):
             "sale-success-message compact-message"
         )
 
+    if pvp:
+        mensagem += " O preço indicado é o PVP."
+
     # Importante: devolve valores vazios quando a fonte não encontrou
     # um campo. Não usa no_update, para não manter dados do ISBN anterior.
     return (
@@ -5640,6 +5413,7 @@ def preencher_novo_livro_por_isbn(isbn):
             mensagem,
             className=classe_mensagem,
         ),
+        preco_sugerido,
     )
 
 
@@ -5680,10 +5454,10 @@ def atualizar_gestao_catalogo(
 ):
     # Os históricos são gerais e independentes do livro selecionado.
     movimentos = consultar_movimentos_stock(
-        limite=10,
+        limite=50,
     )
     historico = consultar_historico_precos(
-        limite=10,
+        limite=50,
     )
     tabela_movimentos = criar_tabela_movimentos_stock(
         movimentos
@@ -6199,78 +5973,6 @@ clientside_callback(
     Input("management-add-close", "n_clicks"),
     prevent_initial_call=True,
 )
-
-
-# Catálogo
-
-@app.callback(
-    Output("catalog-count", "children"),
-    Output("catalog-table-container", "children"),
-    Output("catalog-api-message", "children"),
-    Input("catalog-search", "value"),
-    Input("catalog-genre", "value"),
-    Input("catalog-search-button", "n_clicks"),
-)
-def pesquisar_catalogo(
-    pesquisa,
-    genero,
-    n_clicks,
-):
-    """Filtra o catálogo com base nos critérios introduzidos pelo utilizador."""
-    dados = carregar_catalogo_local()
-    dados_filtrados = filtrar_catalogo(dados, pesquisa, genero)
-    termo = (pesquisa or "").strip().lower()
-    quantidade = len(dados_filtrados)
-    texto_contagem = texto_contagem_livros(quantidade)
-
-    resultado_api = ""
-
-    if (
-        ctx.triggered_id == "catalog-search-button"
-        and termo
-        and quantidade == 0
-        and parece_isbn(pesquisa)
-    ):
-        resultado = procurar_livro(
-            pesquisa.strip()
-        )
-
-        if resultado.get("sucesso"):
-            origem = resultado.get("origem")
-
-            if origem != "Base de Dados Local":
-                autores = resultado.get("autores")
-
-                if isinstance(autores, list):
-                    autores = ", ".join(autores)
-
-                if not autores:
-                    autores = "—"
-
-                resultado_api = criar_resultado_externo(
-                    resultado,
-                    autores,
-                )
-
-                texto_contagem = (
-                    "0 livros encontrados no catálogo local"
-                )
-        else:
-            resultado_api = html.Div(
-                resultado.get(
-                    "erro",
-                    "ISBN não encontrado no catálogo local nem nas fontes externas.",
-                ),
-                className="error-message",
-            )
-
-    return (
-        texto_contagem,
-        criar_tabela_catalogo(
-            dados_filtrados
-        ),
-        resultado_api,
-    )
 
 
 # Novo cliente na venda
