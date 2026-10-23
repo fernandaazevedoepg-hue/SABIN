@@ -16,6 +16,8 @@ from dash import (
     Input,
     Output,
     State,
+    ALL,
+    clientside_callback,
     ctx,
     no_update,
 )
@@ -381,6 +383,38 @@ def carregar_catalogo_local():
         )
 
     return dados
+
+
+def filtrar_catalogo(dados, pesquisa, genero):
+    """Filtra o catálogo por género e por título, autor ou ISBN."""
+    dados_filtrados = dados.copy()
+
+    if genero and genero != "todos":
+        dados_filtrados = dados_filtrados[
+            dados_filtrados["generos"]
+            .fillna("")
+            .str.lower()
+            .str.contains(
+                genero.lower(),
+                regex=False,
+            )
+        ]
+
+    termo = (pesquisa or "").strip().lower()
+
+    if termo:
+        mascara = (
+            dados_filtrados["titulo"].fillna("").str.lower().str.contains(termo, regex=False)
+            | dados_filtrados["isbn"].fillna("").astype(str).str.lower().str.contains(termo, regex=False)
+            | dados_filtrados["autores"].fillna("").str.lower().str.contains(termo, regex=False)
+        )
+        dados_filtrados = dados_filtrados[mascara]
+
+    return dados_filtrados
+
+
+def texto_contagem_livros(quantidade):
+    return f"{quantidade} {'livro encontrado' if quantidade == 1 else 'livros encontrados'}"
 
 
 def carregar_generos():
@@ -835,7 +869,8 @@ def criar_grafico_stock(dados):
 
 # Tabelas e componentes
 
-def criar_tabela_catalogo(dados):
+def criar_tabela_catalogo(dados, com_acoes=False):
+    """Tabela do catálogo; com_acoes acrescenta o botão Editar (Gestão de Catálogo)."""
     if dados.empty:
         return html.Div(
             "Nenhum livro encontrado no catálogo da Bookmarked.",
@@ -877,6 +912,23 @@ def criar_tabela_catalogo(dados):
                         )
                     ),
                 ]
+                + (
+                    [
+                        html.Td(
+                            html.Button(
+                                "Editar",
+                                id={
+                                    "type": "management-edit-row",
+                                    "index": int(livro["id"]),
+                                },
+                                className="table-action-button",
+                                n_clicks=0,
+                            )
+                        )
+                    ]
+                    if com_acoes
+                    else []
+                )
             )
         )
 
@@ -897,6 +949,11 @@ def criar_tabela_catalogo(dados):
                                 html.Th("Preço"),
                                 html.Th("Disponível"),
                             ]
+                            + (
+                                [html.Th("Ações")]
+                                if com_acoes
+                                else []
+                            )
                         )
                     ),
                     html.Tbody(
@@ -2141,12 +2198,19 @@ def pagina_gestao_catalogo():
         for genero in generos
     ]
 
+    catalogo = carregar_catalogo_local()
+    opcoes_filtro_generos = [{"label": "Todos os géneros", "value": "todos"}] + [
+        {"label": genero, "value": genero}
+        for genero in carregar_generos()
+    ]
+
     return html.Div(
         children=[
             dcc.Store(
                 id="management-refresh-store",
                 data=0,
             ),
+            dcc.Store(id="management-scroll-dummy"),
             dcc.Store(
                 id="management-edit-refresh-store",
                 data=0,
@@ -2157,6 +2221,64 @@ def pagina_gestao_catalogo():
                     html.H2("Gestão de Catálogo"),
                     html.P(
                         "Reposição de stock, atualização de preços e registo de novos livros"
+                    ),
+                ],
+            ),
+            html.Div(
+                className="catalog-local-panel management-catalog-panel",
+                children=[
+                    html.Div(
+                        className="catalog-section-header",
+                        children=[
+                            html.Div(
+                                children=[
+                                    html.H3("Catálogo Completo"),
+                                    html.P(
+                                        "Carrega em Editar para alterar um livro, repor stock ou mudar o preço."
+                                    ),
+                                ]
+                            ),
+                            html.Div(
+                                className="management-catalog-actions",
+                                children=[
+                                    html.Div(
+                                        id="management-catalog-count",
+                                        className="catalog-count",
+                                        children=texto_contagem_livros(len(catalogo)),
+                                    ),
+                                    html.Button(
+                                        "+ Adicionar livro",
+                                        id="management-open-add",
+                                        className="primary-button",
+                                        n_clicks=0,
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        className="catalog-search-row management-catalog-search",
+                        children=[
+                            dcc.Input(
+                                id="management-catalog-search",
+                                type="text",
+                                placeholder="Pesquisar por título, autor ou ISBN...",
+                                className="catalog-search-input",
+                                debounce=False,
+                            ),
+                            dcc.Dropdown(
+                                id="management-catalog-genre",
+                                options=opcoes_filtro_generos,
+                                value="todos",
+                                clearable=False,
+                                searchable=True,
+                                className="catalog-genre-dropdown",
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        id="management-catalog-table",
+                        children=criar_tabela_catalogo(catalogo, com_acoes=True),
                     ),
                 ],
             ),
@@ -2179,6 +2301,7 @@ def pagina_gestao_catalogo():
                 ],
             ),
             html.Div(
+                id="management-edit-panel",
                 className="sale-form-panel edit-book-panel",
                 children=[
                     html.H3("Editar Informações do Livro"),
@@ -2359,6 +2482,7 @@ def pagina_gestao_catalogo():
                 ],
             ),
             html.Div(
+                id="management-add-panel",
                 className="sale-form-panel add-book-panel",
                 children=[
                     html.Div(
@@ -5966,6 +6090,71 @@ def gerir_catalogo_operacional(
     )
 
 
+# Catálogo completo na Gestão de Catálogo
+
+@app.callback(
+    Output("management-catalog-count", "children"),
+    Output("management-catalog-table", "children"),
+    Input("management-catalog-search", "value"),
+    Input("management-catalog-genre", "value"),
+    Input("management-refresh-store", "data"),
+    Input("management-edit-refresh-store", "data"),
+    prevent_initial_call=True,
+)
+def atualizar_tabela_gestao(pesquisa, genero, refresh, edit_refresh):
+    """Atualiza a tabela do catálogo da gestão após pesquisas, edições e novos livros."""
+    dados = filtrar_catalogo(carregar_catalogo_local(), pesquisa, genero)
+    return (
+        texto_contagem_livros(len(dados)),
+        criar_tabela_catalogo(dados, com_acoes=True),
+    )
+
+
+@app.callback(
+    Output("management-book", "value", allow_duplicate=True),
+    Input({"type": "management-edit-row", "index": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def editar_livro_da_tabela(cliques):
+    """Seleciona o livro da linha para os formulários de edição, stock e preço."""
+    if not ctx.triggered_id or not any(cliques or []):
+        return no_update
+    if not ctx.triggered or not ctx.triggered[0].get("value"):
+        return no_update
+    return ctx.triggered_id["index"]
+
+
+# Leva o utilizador ao formulário certo depois de carregar em Editar ou Adicionar.
+clientside_callback(
+    """
+    function(cliquesEditar, cliqueAdicionar) {
+        const origem = window.dash_clientside.callback_context.triggered;
+        if (!origem.length || !origem[0].value) {
+            return window.dash_clientside.no_update;
+        }
+        const adicionar = origem[0].prop_id.startsWith("management-open-add");
+        const painel = document.getElementById(
+            adicionar ? "management-add-panel" : "management-edit-panel"
+        );
+        if (painel) {
+            painel.scrollIntoView({behavior: "smooth", block: "start"});
+            if (adicionar) {
+                const titulo = document.getElementById("new-book-title");
+                if (titulo) {
+                    setTimeout(function() { titulo.focus(); }, 400);
+                }
+            }
+        }
+        return Date.now();
+    }
+    """,
+    Output("management-scroll-dummy", "data"),
+    Input({"type": "management-edit-row", "index": ALL}, "n_clicks"),
+    Input("management-open-add", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
 # Catálogo
 
 @app.callback(
@@ -5983,64 +6172,10 @@ def pesquisar_catalogo(
 ):
     """Filtra o catálogo com base nos critérios introduzidos pelo utilizador."""
     dados = carregar_catalogo_local()
-    dados_filtrados = dados.copy()
-
-    if genero and genero != "todos":
-        dados_filtrados = dados_filtrados[
-            dados_filtrados["generos"]
-            .fillna("")
-            .str.lower()
-            .str.contains(
-                genero.lower(),
-                regex=False,
-            )
-        ]
-
-    termo = ""
-
-    if pesquisa:
-        termo = pesquisa.strip().lower()
-
-    if termo:
-        mascara = (
-            dados_filtrados["titulo"]
-            .fillna("")
-            .str.lower()
-            .str.contains(
-                termo,
-                regex=False,
-            )
-            |
-            dados_filtrados["isbn"]
-            .fillna("")
-            .astype(str)
-            .str.lower()
-            .str.contains(
-                termo,
-                regex=False,
-            )
-            |
-            dados_filtrados["autores"]
-            .fillna("")
-            .str.lower()
-            .str.contains(
-                termo,
-                regex=False,
-            )
-        )
-
-        dados_filtrados = dados_filtrados[
-            mascara
-        ]
-
-    quantidade = len(
-        dados_filtrados
-    )
-
-    texto_contagem = (
-        f"{quantidade} "
-        f"{'livro encontrado' if quantidade == 1 else 'livros encontrados'}"
-    )
+    dados_filtrados = filtrar_catalogo(dados, pesquisa, genero)
+    termo = (pesquisa or "").strip().lower()
+    quantidade = len(dados_filtrados)
+    texto_contagem = texto_contagem_livros(quantidade)
 
     resultado_api = ""
 

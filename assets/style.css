@@ -2803,3 +2803,51 @@ body {
 .interpretation-diagnostic-v3.warning {
     border-left-color: #f59e0b;
 }
+
+/* Catálogo completo na Gestão de Catálogo */
+
+.management-catalog-panel {
+    margin-top: 0;
+    margin-bottom: 20px;
+}
+
+.management-catalog-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.management-catalog-search {
+    grid-template-columns: minmax(300px, 1fr) 240px;
+}
+
+.table-action-button {
+    padding: 6px 14px;
+    border: 1px solid #2563eb;
+    border-radius: 6px;
+    background: #ffffff;
+    color: #2563eb;
+    font-size: 12px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.table-action-button:hover {
+    background: #2563eb;
+    color: #ffffff;
+}
+
+@media (max-width: 900px) {
+    .management-catalog-actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .management-catalog-search {
+        grid-template-columns: 1fr;
+    }
+}
+
+.management-catalog-panel .catalog-table td:nth-child(6) {
+    white-space: nowrap;
+}
