@@ -2210,7 +2210,6 @@ def pagina_gestao_catalogo():
                 id="management-refresh-store",
                 data=0,
             ),
-            dcc.Store(id="management-scroll-dummy"),
             dcc.Store(
                 id="management-edit-refresh-store",
                 data=0,
@@ -2234,7 +2233,7 @@ def pagina_gestao_catalogo():
                                 children=[
                                     html.H3("Catálogo Completo"),
                                     html.P(
-                                        "Carrega em Editar para alterar um livro, repor stock ou mudar o preço."
+                                        "Carrega em Editar para alterar os dados de um livro, repor stock ou mudar o preço."
                                     ),
                                 ]
                             ),
@@ -2283,392 +2282,6 @@ def pagina_gestao_catalogo():
                 ],
             ),
             html.Div(
-                className="sale-form-panel management-select-panel",
-                children=[
-                    html.H3("Selecionar Livro"),
-                    dcc.Dropdown(
-                        id="management-book",
-                        options=opcoes_livros,
-                        placeholder="Seleciona um livro...",
-                        clearable=True,
-                        searchable=True,
-                        className="sale-dropdown",
-                    ),
-                    html.Div(
-                        id="management-book-info",
-                        className="sale-book-info",
-                    ),
-                ],
-            ),
-            html.Div(
-                id="management-edit-panel",
-                className="sale-form-panel edit-book-panel",
-                children=[
-                    html.H3("Editar Informações do Livro"),
-                    html.P(
-                        "Seleciona um livro acima para corrigir título, ISBN, editora, data, autores ou géneros.",
-                        className="form-help",
-                    ),
-                    html.Div(
-                        className="book-form-grid",
-                        children=[
-                            html.Div(
-                                className="form-field span-2",
-                                children=[
-                                    html.Label("Título", className="form-label"),
-                                    dcc.Input(
-                                        id="management-edit-title",
-                                        type="text",
-                                        className="sale-number-input",
-                                    ),
-                                ],
-                            ),
-                            html.Div(
-                                className="form-field",
-                                children=[
-                                    html.Label("ISBN", className="form-label"),
-                                    dcc.Input(
-                                        id="management-edit-isbn",
-                                        type="text",
-                                        className="sale-number-input",
-                                    ),
-                                ],
-                            ),
-                            html.Div(
-                                className="form-field",
-                                children=[
-                                    html.Label("Editora", className="form-label"),
-                                    dcc.Input(
-                                        id="management-edit-publisher",
-                                        type="text",
-                                        className="sale-number-input",
-                                    ),
-                                ],
-                            ),
-                            html.Div(
-                                className="form-field",
-                                children=[
-                                    html.Label("Data de publicação", className="form-label"),
-                                    dcc.DatePickerSingle(
-                                        id="management-edit-date",
-                                        display_format="DD/MM/YYYY",
-                                        placeholder="Seleciona uma data",
-                                        className="book-date-picker",
-                                    ),
-                                ],
-                            ),
-                            html.Div(
-                                className="form-field span-2",
-                                children=[
-                                    html.Label("Autor(es)", className="form-label"),
-                                    dcc.Input(
-                                        id="management-edit-authors",
-                                        type="text",
-                                        placeholder="Ex.: José Saramago",
-                                        className="sale-number-input",
-                                    ),
-                                    html.P(
-                                        "Para vários autores, separa os nomes por vírgulas.",
-                                        className="form-help",
-                                    ),
-                                ],
-                            ),
-                            html.Div(
-                                className="form-field span-2",
-                                children=[
-                                    html.Label("Género(s)", className="form-label"),
-                                    dcc.Dropdown(
-                                        id="management-edit-genres",
-                                        options=opcoes_generos,
-                                        multi=True,
-                                        placeholder="Seleciona um ou mais géneros",
-                                        className="sale-dropdown",
-                                    ),
-                                ],
-                            ),
-                        ],
-                    ),
-                    html.Button(
-                        "Guardar Alterações",
-                        id="management-edit-submit",
-                        className="primary-button add-book-button",
-                    ),
-                    html.Div(id="management-edit-message"),
-                ],
-            ),
-            html.Div(
-                className="sale-layout",
-                children=[
-                    html.Div(
-                        className="sale-form-panel",
-                        children=[
-                            html.H3("Repor Stock"),
-                            html.P(
-                                "Adiciona unidades ao stock físico do livro.",
-                                className="form-help",
-                            ),
-                            html.Label(
-                                "Quantidade a adicionar",
-                                className="form-label",
-                            ),
-                            html.Div(
-                                className="quantity-stepper",
-                                children=[
-                                    html.Button(
-                                        "−",
-                                        id="management-stock-minus",
-                                        className="stepper-button",
-                                    ),
-                                    dcc.Input(
-                                        id="management-stock-quantity",
-                                        type="text",
-                                        value="1",
-                                        className="stepper-input",
-                                    ),
-                                    html.Button(
-                                        "+",
-                                        id="management-stock-plus",
-                                        className="stepper-button",
-                                    ),
-                                ],
-                            ),
-                            html.Label(
-                                "Observação",
-                                className="form-label",
-                            ),
-                            dcc.Textarea(
-                                id="management-stock-observation",
-                                placeholder="Ex.: Reposição do fornecedor",
-                                className="management-textarea",
-                            ),
-                            html.Button(
-                                "Confirmar Reposição",
-                                id="management-stock-submit",
-                                className="primary-button sale-submit-button",
-                            ),
-                            html.Div(
-                                id="management-stock-message",
-                            ),
-                        ],
-                    ),
-                    html.Div(
-                        className="sale-form-panel",
-                        children=[
-                            html.H3("Alterar Preço"),
-                            html.P(
-                                "Define o preço utilizado nas próximas vendas.",
-                                className="form-help",
-                            ),
-                            html.Label(
-                                "Novo preço (€)",
-                                className="form-label",
-                            ),
-                            dcc.Input(
-                                id="management-price-input",
-                                type="text",
-                                placeholder="Ex.: 13.90",
-                                className="sale-number-input",
-                            ),
-                            html.Button(
-                                "Atualizar Preço",
-                                id="management-price-submit",
-                                className="primary-button sale-submit-button",
-                            ),
-                            html.Div(
-                                id="management-price-message",
-                            ),
-                        ],
-                    ),
-                ],
-            ),
-            html.Div(
-                id="management-add-panel",
-                className="sale-form-panel add-book-panel",
-                children=[
-                    html.Div(
-                        className="panel-heading-row",
-                        children=[
-                            html.Div(
-                                children=[
-                                    html.H3("Adicionar Novo Livro"),
-                                    html.P(
-                                        "Regista um novo título no catálogo da Bookmarked.",
-                                        className="form-help",
-                                    ),
-                                ]
-                            ),
-                        ],
-                    ),
-                    html.Div(
-                        className="book-form-grid",
-                        children=[
-                            html.Div(
-                                className="form-field span-2",
-                                children=[
-                                    html.Label(
-                                        "Título",
-                                        className="form-label",
-                                    ),
-                                    dcc.Input(
-                                        id="new-book-title",
-                                        type="text",
-                                        placeholder="Título do livro",
-                                        className="sale-number-input",
-                                    ),
-                                ],
-                            ),
-                            html.Div(
-                                className="form-field",
-                                children=[
-                                    html.Label(
-                                        "ISBN",
-                                        className="form-label",
-                                    ),
-                                    dcc.Input(
-                                        id="new-book-isbn",
-                                        type="text",
-                                        placeholder="ISBN-10 ou ISBN-13",
-                                        className="sale-number-input",
-                                        debounce=0.7,
-                                    ),
-                                    dcc.Loading(
-                                        id="new-book-isbn-loading",
-                                        type="circle",
-                                        children=html.Div(
-                                            id="new-book-api-message",
-                                        ),
-                                    ),
-                                ],
-                            ),
-                            html.Div(
-                                className="form-field",
-                                children=[
-                                    html.Label(
-                                        "Preço (€)",
-                                        className="form-label",
-                                    ),
-                                    dcc.Input(
-                                        id="new-book-price",
-                                        type="text",
-                                        placeholder="Ex.: 17.50",
-                                        className="sale-number-input",
-                                    ),
-                                ],
-                            ),
-                            html.Div(
-                                className="form-field",
-                                children=[
-                                    html.Label(
-                                        "Stock inicial",
-                                        className="form-label",
-                                    ),
-                                    html.Div(
-                                        className="quantity-stepper",
-                                        children=[
-                                            html.Button(
-                                                "−",
-                                                id="new-book-stock-minus",
-                                                className="stepper-button",
-                                                n_clicks=0,
-                                            ),
-                                            dcc.Input(
-                                                id="new-book-stock",
-                                                type="text",
-                                                value="0",
-                                                className="stepper-input",
-                                            ),
-                                            html.Button(
-                                                "+",
-                                                id="new-book-stock-plus",
-                                                className="stepper-button",
-                                                n_clicks=0,
-                                            ),
-                                        ],
-                                    ),
-                                ],
-                            ),
-                            html.Div(
-                                className="form-field",
-                                children=[
-                                    html.Label(
-                                        "Editora",
-                                        className="form-label",
-                                    ),
-                                    dcc.Input(
-                                        id="new-book-publisher",
-                                        type="text",
-                                        placeholder="Editora",
-                                        className="sale-number-input",
-                                    ),
-                                ],
-                            ),
-                            html.Div(
-                                className="form-field",
-                                children=[
-                                    html.Label(
-                                        "Data de publicação",
-                                        className="form-label",
-                                    ),
-                                    dcc.DatePickerSingle(
-                                        id="new-book-date",
-                                        display_format="DD/MM/YYYY",
-                                        placeholder="Seleciona uma data",
-                                        className="book-date-picker",
-                                    ),
-                                ],
-                            ),
-                            html.Div(
-                                className="form-field span-2",
-                                children=[
-                                    html.Label(
-                                        "Autor(es)",
-                                        className="form-label",
-                                    ),
-                                    dcc.Input(
-                                        id="new-book-authors",
-                                        type="text",
-                                        placeholder="Ex.: José Saramago",
-                                        className="sale-number-input",
-                                    ),
-                                    html.P(
-                                        "Para vários autores, separa os nomes por vírgulas.",
-                                        className="form-help",
-                                    ),
-                                ],
-                            ),
-                            html.Div(
-                                className="form-field span-2",
-                                children=[
-                                    html.Label(
-                                        "Género(s)",
-                                        className="form-label",
-                                    ),
-                                    dcc.Dropdown(
-                                        id="new-book-genres",
-                                        options=opcoes_generos,
-                                        multi=True,
-                                        placeholder="Seleciona um ou mais géneros",
-                                        className="sale-dropdown",
-                                    ),
-                                ],
-                            ),
-                        ],
-                    ),
-                    html.Button(
-                        "Adicionar Livro",
-                        id="management-add-book-submit",
-                        className="primary-button add-book-button",
-                    ),
-                    dcc.Loading(
-                        id="management-add-loading",
-                        type="circle",
-                        children=html.Div(
-                            id="management-add-message",
-                        ),
-                    ),
-                ],
-            ),
-            html.Div(
                 className="management-history-grid",
                 children=[
                     html.Div(
@@ -2698,6 +2311,436 @@ def pagina_gestao_catalogo():
                         ],
                     ),
                 ],
+            ),
+            html.Div(
+                id="management-edit-modal",
+                className="sabin-modal",
+                children=html.Div(
+                    className="sabin-modal-dialog",
+                    children=[
+                        html.Div(
+                            className="sabin-modal-header",
+                            children=[
+                                html.H3("Editar livro", id="management-edit-modal-title"),
+                                html.Button(
+                                    "×",
+                                    id="management-edit-close",
+                                    className="sabin-modal-close",
+                                    title="Fechar",
+                                    n_clicks=0,
+                                ),
+                            ],
+                        ),
+                    html.Div(
+                        className="sale-form-panel management-select-panel",
+                        children=[
+                            dcc.Dropdown(
+                                id="management-book",
+                                options=opcoes_livros,
+                                placeholder="Seleciona um livro...",
+                                clearable=True,
+                                searchable=True,
+                                className="sale-dropdown",
+                                style={"display": "none"},
+                            ),
+                            html.Div(
+                                id="management-book-info",
+                                className="sale-book-info",
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        id="management-edit-panel",
+                        className="sale-form-panel edit-book-panel",
+                        children=[
+                            html.H3("Editar Informações do Livro"),
+                            html.P(
+                                "Corrige o título, ISBN, editora, data, autores ou géneros.",
+                                className="form-help",
+                            ),
+                            html.Div(
+                                className="book-form-grid",
+                                children=[
+                                    html.Div(
+                                        className="form-field span-2",
+                                        children=[
+                                            html.Label("Título", className="form-label"),
+                                            dcc.Input(
+                                                id="management-edit-title",
+                                                type="text",
+                                                className="sale-number-input",
+                                            ),
+                                        ],
+                                    ),
+                                    html.Div(
+                                        className="form-field",
+                                        children=[
+                                            html.Label("ISBN", className="form-label"),
+                                            dcc.Input(
+                                                id="management-edit-isbn",
+                                                type="text",
+                                                className="sale-number-input",
+                                            ),
+                                        ],
+                                    ),
+                                    html.Div(
+                                        className="form-field",
+                                        children=[
+                                            html.Label("Editora", className="form-label"),
+                                            dcc.Input(
+                                                id="management-edit-publisher",
+                                                type="text",
+                                                className="sale-number-input",
+                                            ),
+                                        ],
+                                    ),
+                                    html.Div(
+                                        className="form-field",
+                                        children=[
+                                            html.Label("Data de publicação", className="form-label"),
+                                            dcc.DatePickerSingle(
+                                                id="management-edit-date",
+                                                display_format="DD/MM/YYYY",
+                                                placeholder="Seleciona uma data",
+                                                className="book-date-picker",
+                                            ),
+                                        ],
+                                    ),
+                                    html.Div(
+                                        className="form-field span-2",
+                                        children=[
+                                            html.Label("Autor(es)", className="form-label"),
+                                            dcc.Input(
+                                                id="management-edit-authors",
+                                                type="text",
+                                                placeholder="Ex.: José Saramago",
+                                                className="sale-number-input",
+                                            ),
+                                            html.P(
+                                                "Para vários autores, separa os nomes por vírgulas.",
+                                                className="form-help",
+                                            ),
+                                        ],
+                                    ),
+                                    html.Div(
+                                        className="form-field span-2",
+                                        children=[
+                                            html.Label("Género(s)", className="form-label"),
+                                            dcc.Dropdown(
+                                                id="management-edit-genres",
+                                                options=opcoes_generos,
+                                                multi=True,
+                                                placeholder="Seleciona um ou mais géneros",
+                                                className="sale-dropdown",
+                                            ),
+                                        ],
+                                    ),
+                                ],
+                            ),
+                            html.Button(
+                                "Guardar Alterações",
+                                id="management-edit-submit",
+                                className="primary-button add-book-button",
+                            ),
+                            html.Div(id="management-edit-message"),
+                        ],
+                    ),
+                    html.Div(
+                        className="sale-layout",
+                        children=[
+                            html.Div(
+                                className="sale-form-panel",
+                                children=[
+                                    html.H3("Repor Stock"),
+                                    html.P(
+                                        "Adiciona unidades ao stock físico do livro.",
+                                        className="form-help",
+                                    ),
+                                    html.Label(
+                                        "Quantidade a adicionar",
+                                        className="form-label",
+                                    ),
+                                    html.Div(
+                                        className="quantity-stepper",
+                                        children=[
+                                            html.Button(
+                                                "−",
+                                                id="management-stock-minus",
+                                                className="stepper-button",
+                                            ),
+                                            dcc.Input(
+                                                id="management-stock-quantity",
+                                                type="text",
+                                                value="1",
+                                                className="stepper-input",
+                                            ),
+                                            html.Button(
+                                                "+",
+                                                id="management-stock-plus",
+                                                className="stepper-button",
+                                            ),
+                                        ],
+                                    ),
+                                    html.Label(
+                                        "Observação",
+                                        className="form-label",
+                                    ),
+                                    dcc.Textarea(
+                                        id="management-stock-observation",
+                                        placeholder="Ex.: Reposição do fornecedor",
+                                        className="management-textarea",
+                                    ),
+                                    html.Button(
+                                        "Confirmar Reposição",
+                                        id="management-stock-submit",
+                                        className="primary-button sale-submit-button",
+                                    ),
+                                    html.Div(
+                                        id="management-stock-message",
+                                    ),
+                                ],
+                            ),
+                            html.Div(
+                                className="sale-form-panel",
+                                children=[
+                                    html.H3("Alterar Preço"),
+                                    html.P(
+                                        "Define o preço utilizado nas próximas vendas.",
+                                        className="form-help",
+                                    ),
+                                    html.Label(
+                                        "Novo preço (€)",
+                                        className="form-label",
+                                    ),
+                                    dcc.Input(
+                                        id="management-price-input",
+                                        type="text",
+                                        placeholder="Ex.: 13.90",
+                                        className="sale-number-input",
+                                    ),
+                                    html.Button(
+                                        "Atualizar Preço",
+                                        id="management-price-submit",
+                                        className="primary-button sale-submit-button",
+                                    ),
+                                    html.Div(
+                                        id="management-price-message",
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
+                    ],
+                ),
+            ),
+            html.Div(
+                id="management-add-modal",
+                className="sabin-modal",
+                children=html.Div(
+                    className="sabin-modal-dialog",
+                    children=[
+                        html.Div(
+                            className="sabin-modal-header",
+                            children=[
+                                html.H3("Adicionar novo livro", id="management-add-modal-title"),
+                                html.Button(
+                                    "×",
+                                    id="management-add-close",
+                                    className="sabin-modal-close",
+                                    title="Fechar",
+                                    n_clicks=0,
+                                ),
+                            ],
+                        ),
+                    html.Div(
+                        id="management-add-panel",
+                        className="sale-form-panel add-book-panel",
+                        children=[
+                            html.Div(
+                                className="panel-heading-row",
+                                children=[
+                                    html.Div(
+                                        children=[
+                                            html.H3("Adicionar Novo Livro"),
+                                            html.P(
+                                                "Regista um novo título no catálogo da Bookmarked.",
+                                                className="form-help",
+                                            ),
+                                        ]
+                                    ),
+                                ],
+                            ),
+                            html.Div(
+                                className="book-form-grid",
+                                children=[
+                                    html.Div(
+                                        className="form-field span-2",
+                                        children=[
+                                            html.Label(
+                                                "Título",
+                                                className="form-label",
+                                            ),
+                                            dcc.Input(
+                                                id="new-book-title",
+                                                type="text",
+                                                placeholder="Título do livro",
+                                                className="sale-number-input",
+                                            ),
+                                        ],
+                                    ),
+                                    html.Div(
+                                        className="form-field",
+                                        children=[
+                                            html.Label(
+                                                "ISBN",
+                                                className="form-label",
+                                            ),
+                                            dcc.Input(
+                                                id="new-book-isbn",
+                                                type="text",
+                                                placeholder="ISBN-10 ou ISBN-13",
+                                                className="sale-number-input",
+                                                debounce=0.7,
+                                            ),
+                                            dcc.Loading(
+                                                id="new-book-isbn-loading",
+                                                type="circle",
+                                                children=html.Div(
+                                                    id="new-book-api-message",
+                                                ),
+                                            ),
+                                        ],
+                                    ),
+                                    html.Div(
+                                        className="form-field",
+                                        children=[
+                                            html.Label(
+                                                "Preço (€)",
+                                                className="form-label",
+                                            ),
+                                            dcc.Input(
+                                                id="new-book-price",
+                                                type="text",
+                                                placeholder="Ex.: 17.50",
+                                                className="sale-number-input",
+                                            ),
+                                        ],
+                                    ),
+                                    html.Div(
+                                        className="form-field",
+                                        children=[
+                                            html.Label(
+                                                "Stock inicial",
+                                                className="form-label",
+                                            ),
+                                            html.Div(
+                                                className="quantity-stepper",
+                                                children=[
+                                                    html.Button(
+                                                        "−",
+                                                        id="new-book-stock-minus",
+                                                        className="stepper-button",
+                                                        n_clicks=0,
+                                                    ),
+                                                    dcc.Input(
+                                                        id="new-book-stock",
+                                                        type="text",
+                                                        value="0",
+                                                        className="stepper-input",
+                                                    ),
+                                                    html.Button(
+                                                        "+",
+                                                        id="new-book-stock-plus",
+                                                        className="stepper-button",
+                                                        n_clicks=0,
+                                                    ),
+                                                ],
+                                            ),
+                                        ],
+                                    ),
+                                    html.Div(
+                                        className="form-field",
+                                        children=[
+                                            html.Label(
+                                                "Editora",
+                                                className="form-label",
+                                            ),
+                                            dcc.Input(
+                                                id="new-book-publisher",
+                                                type="text",
+                                                placeholder="Editora",
+                                                className="sale-number-input",
+                                            ),
+                                        ],
+                                    ),
+                                    html.Div(
+                                        className="form-field",
+                                        children=[
+                                            html.Label(
+                                                "Data de publicação",
+                                                className="form-label",
+                                            ),
+                                            dcc.DatePickerSingle(
+                                                id="new-book-date",
+                                                display_format="DD/MM/YYYY",
+                                                placeholder="Seleciona uma data",
+                                                className="book-date-picker",
+                                            ),
+                                        ],
+                                    ),
+                                    html.Div(
+                                        className="form-field span-2",
+                                        children=[
+                                            html.Label(
+                                                "Autor(es)",
+                                                className="form-label",
+                                            ),
+                                            dcc.Input(
+                                                id="new-book-authors",
+                                                type="text",
+                                                placeholder="Ex.: José Saramago",
+                                                className="sale-number-input",
+                                            ),
+                                            html.P(
+                                                "Para vários autores, separa os nomes por vírgulas.",
+                                                className="form-help",
+                                            ),
+                                        ],
+                                    ),
+                                    html.Div(
+                                        className="form-field span-2",
+                                        children=[
+                                            html.Label(
+                                                "Género(s)",
+                                                className="form-label",
+                                            ),
+                                            dcc.Dropdown(
+                                                id="new-book-genres",
+                                                options=opcoes_generos,
+                                                multi=True,
+                                                placeholder="Seleciona um ou mais géneros",
+                                                className="sale-dropdown",
+                                            ),
+                                        ],
+                                    ),
+                                ],
+                            ),
+                            html.Button(
+                                "Adicionar Livro",
+                                id="management-add-book-submit",
+                                className="primary-button add-book-button",
+                            ),
+                            dcc.Loading(
+                                id="management-add-loading",
+                                type="circle",
+                                children=html.Div(
+                                    id="management-add-message",
+                                ),
+                            ),
+                        ],
+                    ),
+                    ],
+                ),
             ),
         ]
     )
@@ -6124,33 +6167,36 @@ def editar_livro_da_tabela(cliques):
     return ctx.triggered_id["index"]
 
 
-# Leva o utilizador ao formulário certo depois de carregar em Editar ou Adicionar.
+# Abre e fecha as janelas de edição e de novo livro da Gestão de Catálogo.
 clientside_callback(
     """
-    function(cliquesEditar, cliqueAdicionar) {
+    function(cliquesEditar, cliqueAdicionar, fecharEditar, fecharAdicionar) {
         const origem = window.dash_clientside.callback_context.triggered;
+        const fechada = "sabin-modal";
+        const aberta = "sabin-modal open";
         if (!origem.length || !origem[0].value) {
-            return window.dash_clientside.no_update;
+            return [window.dash_clientside.no_update, window.dash_clientside.no_update];
         }
-        const adicionar = origem[0].prop_id.startsWith("management-open-add");
-        const painel = document.getElementById(
-            adicionar ? "management-add-panel" : "management-edit-panel"
-        );
-        if (painel) {
-            painel.scrollIntoView({behavior: "smooth", block: "start"});
-            if (adicionar) {
+        const id = origem[0].prop_id;
+        if (id.startsWith("management-open-add")) {
+            setTimeout(function() {
                 const titulo = document.getElementById("new-book-title");
-                if (titulo) {
-                    setTimeout(function() { titulo.focus(); }, 400);
-                }
-            }
+                if (titulo) { titulo.focus(); }
+            }, 200);
+            return [fechada, aberta];
         }
-        return Date.now();
+        if (id.startsWith("management-edit-close") || id.startsWith("management-add-close")) {
+            return [fechada, fechada];
+        }
+        return [aberta, fechada];
     }
     """,
-    Output("management-scroll-dummy", "data"),
+    Output("management-edit-modal", "className"),
+    Output("management-add-modal", "className"),
     Input({"type": "management-edit-row", "index": ALL}, "n_clicks"),
     Input("management-open-add", "n_clicks"),
+    Input("management-edit-close", "n_clicks"),
+    Input("management-add-close", "n_clicks"),
     prevent_initial_call=True,
 )
 
