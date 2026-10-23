@@ -3501,45 +3501,11 @@ def criar_interpretacao_stock(
         stock_completo["nivel"] == "Sem procura recente"
     ].copy()
 
-    alertas = dados[
-        dados["nivel"].isin([
-            "Crítico",
-            "Atenção",
-        ])
-    ].copy()
-
     unidades_repor = int(
         dados[
             "quantidade_recomendada"
         ].fillna(0).sum()
     )
-
-    percentagem_alerta = (
-        (len(alertas) / total_livros) * 100
-        if total_livros
-        else 0
-    )
-
-    livro_mais_urgente = None
-
-    if not alertas.empty:
-        alertas_ordenados = alertas.assign(
-            prioridade=alertas[
-                "nivel"
-            ].map({
-                "Crítico": 0,
-                "Atenção": 1,
-            }).fillna(2),
-        ).sort_values(
-            by=[
-                "prioridade",
-                "meses_cobertura",
-                "stock_disponivel",
-            ],
-            na_position="last",
-        )
-
-        livro_mais_urgente = alertas_ordenados.iloc[0]
 
     livro_maior_procura = None
 
@@ -3554,20 +3520,6 @@ def criar_interpretacao_stock(
             by="media_mensal_vendas",
             ascending=False,
         ).iloc[0]
-
-    media_procura_geral = (
-        dados_procura[
-            "media_mensal_vendas"
-        ].mean()
-        if not dados_procura.empty
-        else 0
-    )
-
-    sem_procura_lista = stock_completo[
-        stock_completo[
-            "media_mensal_vendas"
-        ].fillna(0) <= 0
-    ].copy().head(4)
 
     top_procura = (
         dados_procura.sort_values(
@@ -3688,570 +3640,287 @@ def criar_interpretacao_stock(
         else None
     )
 
-    avisos = []
+    # Layout organizado em 4 blocos, cada um com uma só pergunta:
+    # 1) como está o stock, 2) o que repor / acompanhar,
+    # 3) como estão os mais procurados, 4) resumo em frases curtas.
 
-    for _, linha in criticos.head(4).iterrows():
-        avisos.append({
-            "classe": "warning-danger",
-            "titulo": f"{linha['titulo']} necessita de reposição urgente.",
-            "descricao": (
-                f"Stock disponível: {int(linha['stock_disponivel']) if pd.notna(linha['stock_disponivel']) else 0} | "
-                f"Cobertura: {formatar_numero_simples(linha['meses_cobertura'])} mês(es) | "
-                f"Repor: {int(linha['quantidade_recomendada']) if pd.notna(linha['quantidade_recomendada']) else 0} unidade(s)."
-            ),
-        })
+    def texto_cobertura(valor):
+        if valor is None or pd.isna(valor):
+            return "—"
+        meses = float(valor)
+        return f"{formatar_numero_simples(meses, 1)} {'mês' if round(meses, 1) == 1 else 'meses'}"
 
-    for _, linha in atencao.head(3).iterrows():
-        avisos.append({
-            "classe": "warning-soft",
-            "titulo": f"{linha['titulo']} está em nível de atenção.",
-            "descricao": (
-                f"Stock disponível: {int(linha['stock_disponivel']) if pd.notna(linha['stock_disponivel']) else 0} | "
-                f"Cobertura: {formatar_numero_simples(linha['meses_cobertura'])} mês(es) | "
-                f"Repor: {int(linha['quantidade_recomendada']) if pd.notna(linha['quantidade_recomendada']) else 0} unidade(s)."
-            ),
-        })
+    def lista_livros(tabela, classe, vazio):
+        if tabela.empty:
+            return html.P(vazio, className="interp-empty")
 
-    if not avisos:
-        avisos.append({
-            "classe": "warning-info",
-            "titulo": "Não existem avisos críticos neste momento.",
-            "descricao": "O stock atual não apresenta livros em situação Crítica ou Atenção.",
-        })
-
-    informacoes = []
-
-    informacoes.append({
-        "titulo": "Situação Geral",
-        "descricao": (
-            f"{len(normais)} livro(s) estão em situação Normal e {len(sem_procura)} estão sem procura recente."
-        ),
-    })
-
-    if livro_maior_procura is not None:
-        informacoes.append({
-            "titulo": "Maior Procura",
-            "descricao": (
-                f"{livro_maior_procura['titulo']} lidera a procura com média de "
-                f"{formatar_numero_simples(livro_maior_procura['media_mensal_vendas'])} unidade(s) por mês."
-            ),
-        })
-
-    if livro_mais_urgente is not None:
-        informacoes.append({
-            "titulo": "Maior Prioridade",
-            "descricao": (
-                f"{livro_mais_urgente['titulo']} é a reposição mais urgente, com cobertura de "
-                f"{formatar_numero_simples(livro_mais_urgente['meses_cobertura'])} mês(es)."
-            ),
-        })
-
-    informacoes.append({
-        "titulo": "Reposição Recomendada",
-        "descricao": f"O sistema recomenda a reposição total de {unidades_repor} unidade(s).",
-    })
-
-    recomendacoes = []
-
-    if not criticos.empty:
-        nomes_criticos = (
-            criticos[
-                "titulo"
-            ]
-            .dropna()
-            .astype(str)
-            .head(4)
-            .tolist()
-        )
-
-        recomendacoes.append(
-            "Repor imediatamente "
-            + ", ".join(
-                nomes_criticos
-            )
-            + "."
-        )
-
-    if melhor_reforco is not None:
-        recomendacoes.append(
-            f"Considerar aumentar o stock de {melhor_reforco['titulo']}: "
-            f"tem procura média de {formatar_numero_simples(melhor_reforco['media_mensal_vendas'])} unidade(s)/mês "
-            f"e cobertura de {formatar_numero_simples(melhor_reforco['meses_cobertura'])} mês(es)."
-        )
-    elif not atencao.empty:
-        recomendacoes.append(
-            "Acompanhar os livros em Atenção para evitar a passagem para o estado Crítico."
-        )
-
-    if livro_maior_procura is not None:
-        maior_procura_classificacao = classificar_oportunidade_stock(
-            livro_maior_procura
-        )[0]
-
-        if maior_procura_classificacao == "Stock suficiente":
-            recomendacoes.append(
-                f"Manter {livro_maior_procura['titulo']} sob monitorização: é o livro com maior procura, "
-                "mas o stock atual é suficiente e não exige aumento imediato."
-            )
-        else:
-            recomendacoes.append(
-                f"Dar prioridade comercial a {livro_maior_procura['titulo']}, por apresentar a maior procura média mensal."
-            )
-
-    if not sem_procura_lista.empty:
-        recomendacoes.append(
-            "Evitar reforçar o stock dos livros sem procura recente antes de nova avaliação."
-        )
-
-    if not recomendacoes:
-        recomendacoes.append(
-            "O stock encontra-se equilibrado e não existem ações prioritárias neste momento."
-        )
-
-    resumo_cards = [
-        {
-            "titulo": "Críticos",
-            "valor": str(len(criticos)),
-            "descricao": "Livros com reposição urgente.",
-            "classe": "danger",
-        },
-        {
-            "titulo": "Alertas Ativos",
-            "valor": (
-                f"{percentagem_alerta:.1f}%"
-                .replace(".", ",")
-            ),
-            "descricao": f"{len(alertas)} de {total_livros} livro(s) estão em Crítico ou Atenção.",
-            "classe": "warning",
-        },
-        {
-            "titulo": "Maior Procura",
-            "valor": (
-                livro_maior_procura["titulo"]
-                if livro_maior_procura is not None
-                else "—"
-            ),
-            "descricao": (
-                f"Média de {formatar_numero_simples(livro_maior_procura['media_mensal_vendas'])} unidade(s)/mês."
-                if livro_maior_procura is not None
-                else "Sem dados suficientes."
-            ),
-            "classe": "success",
-        },
-        {
-            "titulo": "Reposição Recomendada",
-            "valor": str(unidades_repor),
-            "descricao": "Total de unidades sugeridas para reposição.",
-            "classe": "info",
-        },
-    ]
-
-    alertas_tabela = alertas.copy()
-
-    if not alertas_tabela.empty:
-        alertas_tabela = alertas_tabela.assign(
-            prioridade=alertas_tabela["nivel"].map({
-                "Crítico": 0,
-                "Atenção": 1,
-            }).fillna(2)
-        ).sort_values(
-            by=[
-                "prioridade",
-                "meses_cobertura",
-                "titulo",
-            ],
+        tabela = tabela.sort_values(
+            by=["meses_cobertura", "titulo"],
             na_position="last",
         )
 
-    resumo_cards = [
-        {
-            "titulo": "Críticos",
-            "valor": str(len(criticos)),
-            "subtexto": "reposições urgentes",
-            "classe": "danger",
-        },
-        {
-            "titulo": "Atenção",
-            "valor": str(len(atencao)),
-            "subtexto": "livros a acompanhar",
-            "classe": "warning",
-        },
-        {
-            "titulo": "Alertas",
-            "valor": (
-                f"{percentagem_alerta:.1f}%"
-                .replace(".", ",")
-            ),
-            "subtexto": f"{len(alertas)} de {total_livros} livros",
-            "classe": "info",
-        },
-        {
-            "titulo": "Repor",
-            "valor": str(unidades_repor),
-            "subtexto": "unidades recomendadas",
-            "classe": "success",
-        },
+        return html.Ul(
+            className="interp-list",
+            children=[
+                html.Li(
+                    className="interp-list-item",
+                    children=[
+                        html.Div(
+                            className="interp-list-text",
+                            children=[
+                                html.Strong(linha["titulo"]),
+                                html.Span(
+                                    f"Stock {int(linha['stock_disponivel']) if pd.notna(linha['stock_disponivel']) else 0}"
+                                    f" · dá para {texto_cobertura(linha['meses_cobertura'])}"
+                                ),
+                            ],
+                        ),
+                        html.Span(
+                            f"+{int(linha['quantidade_recomendada']) if pd.notna(linha['quantidade_recomendada']) else 0}",
+                            className=f"interp-qty {classe}",
+                            title="Unidades a repor",
+                        ),
+                    ],
+                )
+                for _, linha in tabela.iterrows()
+            ],
+        )
+
+    def unidades(tabela):
+        return int(tabela["quantidade_recomendada"].fillna(0).sum()) if not tabela.empty else 0
+
+    segmentos = [
+        ("Crítico", len(criticos), "danger"),
+        ("Atenção", len(atencao), "warning"),
+        ("Normal", len(normais), "success"),
+        ("Sem procura recente", len(sem_procura), "neutral"),
     ]
 
-    insights_compactos = [
-        {
-            "titulo": "Maior prioridade",
-            "valor": (
-                livro_mais_urgente["titulo"]
-                if livro_mais_urgente is not None
-                else "Sem prioridade crítica"
-            ),
-            "detalhe": (
-                f"Cobertura de {formatar_numero_simples(livro_mais_urgente['meses_cobertura'])} mês(es)."
-                if livro_mais_urgente is not None
-                else "Não existem livros em Crítico ou Atenção."
-            ),
-            "classe": "danger",
-        },
-        {
-            "titulo": "Maior procura",
-            "valor": (
-                livro_maior_procura["titulo"]
-                if livro_maior_procura is not None
-                else "Sem dados"
-            ),
-            "detalhe": (
-                f"{formatar_numero_simples(livro_maior_procura['media_mensal_vendas'])} unidade(s) por mês."
-                if livro_maior_procura is not None
-                else "Não existem dados suficientes."
-            ),
-            "classe": "success",
-        },
-        {
-            "titulo": "Melhor reforço",
-            "valor": (
-                melhor_reforco["titulo"]
-                if melhor_reforco is not None
-                else "Sem necessidade imediata"
-            ),
-            "detalhe": (
-                f"Cobertura de {formatar_numero_simples(melhor_reforco['meses_cobertura'])} mês(es) com procura de "
-                f"{formatar_numero_simples(melhor_reforco['media_mensal_vendas'])} unidade(s)/mês."
-                if melhor_reforco is not None
-                else "Nenhum livro de alta procura necessita de reforço preventivo neste momento."
-            ),
-            "classe": "warning",
-        },
-        {
-            "titulo": "Situação geral",
-            "valor": f"{len(normais)} normal / {len(sem_procura)} sem procura",
-            "detalhe": "O reforço deve privilegiar procura elevada com cobertura baixa.",
-            "classe": "neutral",
-        },
-    ]
+    conclusoes = []
+
+    if not criticos.empty:
+        conclusoes.append(
+            f"{len(criticos)} livro(s) precisam de reposição imediata "
+            f"({unidades(criticos)} unidades no total)."
+        )
+
+    if not atencao.empty:
+        conclusoes.append(
+            f"{len(atencao)} livro(s) estão perto do limite e devem ser acompanhados."
+        )
+
+    if melhor_reforco is not None:
+        conclusoes.append(
+            f"Vale a pena reforçar {melhor_reforco['titulo']}: vende "
+            f"{formatar_numero_simples(melhor_reforco['media_mensal_vendas'])} por mês e o stock "
+            f"só dá para {texto_cobertura(melhor_reforco['meses_cobertura'])}."
+        )
+
+    if livro_maior_procura is not None:
+        conclusoes.append(
+            f"{livro_maior_procura['titulo']} é o livro mais procurado "
+            f"({formatar_numero_simples(livro_maior_procura['media_mensal_vendas'])} por mês)"
+            + (
+                " e tem stock suficiente."
+                if classificar_oportunidade_stock(livro_maior_procura)[0] == "Stock suficiente"
+                else "; convém garantir que não falta."
+            )
+        )
+
+    if not sem_procura.empty:
+        conclusoes.append(
+            f"{len(sem_procura)} livro(s) sem vendas recentes: não é preciso reforçar o stock."
+        )
+
+    if not conclusoes:
+        conclusoes.append(
+            "O stock está equilibrado e não há ações prioritárias neste momento."
+        )
 
     return html.Div(
-        className="interpretation-page interpretation-page-v3",
+        className="interp-page",
         children=[
             html.Div(
-                className="page-header interpretation-header-v3",
+                className="page-header",
+                children=[
+                    html.H2("Interpretação do Stock"),
+                    html.P(
+                        "O que o stock está a dizer e o que fazer a seguir."
+                    ),
+                ],
+            ),
+
+            # 1) Estado do stock
+            html.Div(
+                className="interp-card",
                 children=[
                     html.Div(
+                        className="interp-card-head",
                         children=[
-                            html.H2("Interpretação do Stock"),
+                            html.H3("Estado do stock"),
+                            html.Span(
+                                f"{total_livros} livros · {unidades_repor} unidades a repor",
+                                className="interp-muted",
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        className="interp-bar",
+                        children=[
+                            html.Div(
+                                className=f"interp-bar-seg {classe}",
+                                style={"flex": quantidade},
+                                title=f"{nome}: {quantidade}",
+                            )
+                            for nome, quantidade, classe in segmentos
+                            if quantidade > 0
+                        ],
+                    ),
+                    html.Div(
+                        className="interp-legend",
+                        children=[
+                            html.Div(
+                                className="interp-legend-item",
+                                children=[
+                                    html.Span(className=f"interp-dot {classe}"),
+                                    html.Span(nome),
+                                    html.Strong(str(quantidade)),
+                                ],
+                            )
+                            for nome, quantidade, classe in segmentos
+                        ],
+                    ),
+                ],
+            ),
+
+            # 2) Repor agora / Acompanhar
+            html.Div(
+                className="interp-grid",
+                children=[
+                    html.Div(
+                        className="interp-card interp-card-danger",
+                        children=[
+                            html.Div(
+                                className="interp-card-head",
+                                children=[
+                                    html.H3("Repor agora"),
+                                    html.Span(
+                                        f"{unidades(criticos)} unidades",
+                                        className="interp-pill danger",
+                                    ),
+                                ],
+                            ),
                             html.P(
-                                "Resumo analítico dos alertas, procura e necessidades de reposição."
+                                "Stock a acabar: dá para menos de 1 mês de vendas.",
+                                className="interp-muted",
                             ),
-                        ]
+                            lista_livros(
+                                criticos,
+                                "danger",
+                                "Nenhum livro em estado crítico.",
+                            ),
+                        ],
                     ),
                     html.Div(
-                        className="interpretation-header-status",
+                        className="interp-card interp-card-warning",
                         children=[
-                            html.Span(
-                                className="interpretation-status-dot"
+                            html.Div(
+                                className="interp-card-head",
+                                children=[
+                                    html.H3("Acompanhar"),
+                                    html.Span(
+                                        f"{unidades(atencao)} unidades",
+                                        className="interp-pill warning",
+                                    ),
+                                ],
                             ),
-                            html.Span(
-                                "Dados atuais"
+                            html.P(
+                                "Ainda há stock, mas está perto do limite.",
+                                className="interp-muted",
+                            ),
+                            lista_livros(
+                                atencao,
+                                "warning",
+                                "Nenhum livro em atenção.",
                             ),
                         ],
                     ),
                 ],
             ),
+
+            # 3) Mais procurados
             html.Div(
-                className="interpretation-kpi-row-v3",
+                className="interp-card",
                 children=[
                     html.Div(
-                        className=f"interpretation-kpi-v3 {card['classe']}",
+                        className="interp-card-head",
                         children=[
-                            html.Div(
-                                className="interpretation-kpi-v3-head",
-                                children=[
-                                    html.Span(card["titulo"]),
-                                    html.Strong(card["valor"]),
-                                ],
-                            ),
-                            html.P(card["subtexto"]),
-                        ],
-                    )
-                    for card in resumo_cards
-                ],
-            ),
-            html.Div(
-                className="interpretation-layout-v3",
-                children=[
-                    html.Div(
-                        className="interpretation-main-column-v3",
-                        children=[
-                            html.Div(
-                                className="interpretation-panel-v3",
-                                children=[
-                                    html.Div(
-                                        className="interpretation-panel-title-v3",
-                                        children=[
-                                            html.Div(
-                                                children=[
-                                                    html.H3("Alertas Prioritários"),
-                                                    html.P(
-                                                        "Livros que exigem intervenção com base na cobertura disponível."
-                                                    ),
-                                                ]
-                                            ),
-                                            html.Span(
-                                                f"{len(alertas)} ativos",
-                                                className="interpretation-badge-v3",
-                                            ),
-                                        ],
-                                    ),
-                                    html.Div(
-                                        className="interpretation-table-wrap-v3",
-                                        children=[
-                                            html.Table(
-                                                className="interpretation-table-v3",
-                                                children=[
-                                                    html.Thead(
-                                                        html.Tr([
-                                                            html.Th("Livro"),
-                                                            html.Th("Estado"),
-                                                            html.Th("Stock"),
-                                                            html.Th("Cobertura"),
-                                                            html.Th("Repor"),
-                                                        ])
-                                                    ),
-                                                    html.Tbody(
-                                                        [
-                                                            html.Tr([
-                                                                html.Td(
-                                                                    linha["titulo"],
-                                                                    className="interpretation-book-v3",
-                                                                ),
-                                                                html.Td(
-                                                                    html.Span(
-                                                                        linha["nivel"],
-                                                                        className=(
-                                                                            "interpretation-level-v3 critical"
-                                                                            if linha["nivel"] == "Crítico"
-                                                                            else "interpretation-level-v3 warning"
-                                                                        ),
-                                                                    )
-                                                                ),
-                                                                html.Td(
-                                                                    str(
-                                                                        int(linha["stock_disponivel"])
-                                                                        if pd.notna(linha["stock_disponivel"])
-                                                                        else 0
-                                                                    )
-                                                                ),
-                                                                html.Td(
-                                                                    formatar_numero_simples(
-                                                                        linha["meses_cobertura"]
-                                                                    )
-                                                                ),
-                                                                html.Td(
-                                                                    str(
-                                                                        int(linha["quantidade_recomendada"])
-                                                                        if pd.notna(linha["quantidade_recomendada"])
-                                                                        else 0
-                                                                    )
-                                                                ),
-                                                            ])
-                                                            for _, linha in alertas_tabela.iterrows()
-                                                        ]
-                                                        if not alertas_tabela.empty
-                                                        else [
-                                                            html.Tr([
-                                                                html.Td(
-                                                                    "Não existem alertas ativos.",
-                                                                    colSpan=5,
-                                                                    className="interpretation-empty-v3",
-                                                                )
-                                                            ])
-                                                        ]
-                                                    ),
-                                                ],
-                                            )
-                                        ],
-                                    ),
-                                ],
-                            ),
-                            html.Div(
-                                className="interpretation-panel-v3",
-                                children=[
-                                    html.Div(
-                                        className="interpretation-panel-title-v3",
-                                        children=[
-                                            html.Div(
-                                                children=[
-                                                    html.H3("Mais Vendidos e Oportunidades de Stock"),
-                                                    html.P(
-                                                        "Livros com maior procura recente e indicação automática sobre a necessidade de reforço."
-                                                    ),
-                                                ]
-                                            ),
-                                        ],
-                                    ),
-                                    html.Div(
-                                        className="interpretation-table-wrap-v3 compact",
-                                        children=[
-                                            html.Table(
-                                                className="interpretation-table-v3 performance",
-                                                children=[
-                                                    html.Thead(
-                                                        html.Tr([
-                                                            html.Th("Livro"),
-                                                            html.Th("Média/mês"),
-                                                            html.Th("Stock"),
-                                                            html.Th("Cobertura"),
-                                                            html.Th("Sugestão"),
-                                                        ])
-                                                    ),
-                                                    html.Tbody(
-                                                        [
-                                                            html.Tr([
-                                                                html.Td(
-                                                                    linha["titulo"],
-                                                                    className="interpretation-book-v3",
-                                                                ),
-                                                                html.Td(
-                                                                    formatar_numero_simples(
-                                                                        linha["media_mensal_vendas"]
-                                                                    )
-                                                                ),
-                                                                html.Td(
-                                                                    str(
-                                                                        int(linha["stock_disponivel"])
-                                                                        if pd.notna(linha["stock_disponivel"])
-                                                                        else 0
-                                                                    )
-                                                                ),
-                                                                html.Td(
-                                                                    formatar_numero_simples(
-                                                                        linha["meses_cobertura"]
-                                                                    )
-                                                                ),
-                                                                html.Td(
-                                                                    html.Span(
-                                                                        linha["sugestao_stock"],
-                                                                        className=(
-                                                                            "interpretation-suggestion-v3 "
-                                                                            + linha["classe_sugestao_stock"]
-                                                                        ),
-                                                                    )
-                                                                ),
-                                                            ])
-                                                            for _, linha in top_procura.iterrows()
-                                                        ]
-                                                        if not top_procura.empty
-                                                        else [
-                                                            html.Tr([
-                                                                html.Td(
-                                                                    "Não existem dados suficientes de procura neste momento.",
-                                                                    colSpan=5,
-                                                                    className="interpretation-empty-v3",
-                                                                )
-                                                            ])
-                                                        ]
-                                                    ),
-                                                ],
-                                            )
-                                        ],
-                                    ),
-                                ],
+                            html.H3("Livros mais procurados"),
+                            html.Span(
+                                "Vendas médias por mês e se o stock chega",
+                                className="interp-muted",
                             ),
                         ],
                     ),
                     html.Div(
-                        className="interpretation-side-column-v3",
-                        children=[
-                            html.Div(
-                                className="interpretation-panel-v3",
-                                children=[
-                                    html.Div(
-                                        className="interpretation-panel-title-v3",
-                                        children=[
-                                            html.Div(
-                                                children=[
-                                                    html.H3("Diagnóstico Rápido"),
-                                                    html.P(
-                                                        "Leitura direta da situação atual do stock."
-                                                    ),
-                                                ]
+                        className="interp-table-wrap",
+                        children=html.Table(
+                            className="interp-table",
+                            children=[
+                                html.Thead(
+                                    html.Tr([
+                                        html.Th("Livro"),
+                                        html.Th("Vendas/mês"),
+                                        html.Th("Stock"),
+                                        html.Th("Dá para"),
+                                        html.Th("Situação"),
+                                    ])
+                                ),
+                                html.Tbody(
+                                    [
+                                        html.Tr([
+                                            html.Td(html.Strong(linha["titulo"])),
+                                            html.Td(formatar_numero_simples(linha["media_mensal_vendas"])),
+                                            html.Td(
+                                                int(linha["stock_disponivel"])
+                                                if pd.notna(linha["stock_disponivel"])
+                                                else 0
                                             ),
-                                        ],
-                                    ),
-                                    html.Div(
-                                        className="interpretation-diagnostic-list-v3",
-                                        children=[
-                                            html.Div(
-                                                className=f"interpretation-diagnostic-v3 {item['classe']}",
-                                                children=[
-                                                    html.Div(
-                                                        className="interpretation-diagnostic-main-v3",
-                                                        children=[
-                                                            html.Span(item["titulo"]),
-                                                            html.Strong(item["valor"]),
-                                                        ],
-                                                    ),
-                                                    html.P(item["detalhe"]),
-                                                ],
-                                            )
-                                            for item in insights_compactos
-                                        ],
-                                    ),
-                                ],
-                            ),
-                            html.Div(
-                                className="interpretation-panel-v3",
-                                children=[
-                                    html.Div(
-                                        className="interpretation-panel-title-v3",
-                                        children=[
-                                            html.Div(
-                                                children=[
-                                                    html.H3("Ações Sugeridas"),
-                                                    html.P(
-                                                        "Recomendações automáticas com base nos indicadores."
-                                                    ),
-                                                ]
+                                            html.Td(texto_cobertura(linha["meses_cobertura"])),
+                                            html.Td(
+                                                html.Span(
+                                                    linha["sugestao_stock"],
+                                                    className=f"interp-badge {linha['classe_sugestao_stock']}",
+                                                )
                                             ),
-                                        ],
-                                    ),
-                                    html.Div(
-                                        className="interpretation-actions-v3",
-                                        children=[
-                                            html.Div(
-                                                className="interpretation-action-v3",
-                                                children=[
-                                                    html.Span(
-                                                        str(indice),
-                                                        className="interpretation-action-index-v3",
-                                                    ),
-                                                    html.P(recomendacao),
-                                                ],
+                                        ])
+                                        for _, linha in top_procura.iterrows()
+                                    ]
+                                    if not top_procura.empty
+                                    else [
+                                        html.Tr(
+                                            html.Td(
+                                                "Sem vendas suficientes para calcular a procura.",
+                                                colSpan=5,
+                                                className="interp-empty",
                                             )
-                                            for indice, recomendacao in enumerate(
-                                                recomendacoes,
-                                                start=1,
-                                            )
-                                        ],
-                                    ),
-                                ],
-                            ),
-                        ],
+                                        )
+                                    ]
+                                ),
+                            ],
+                        ),
+                    ),
+                ],
+            ),
+
+            # 4) Resumo
+            html.Div(
+                className="interp-card interp-summary",
+                children=[
+                    html.H3("Em resumo"),
+                    html.Ul(
+                        className="interp-summary-list",
+                        children=[html.Li(frase) for frase in conclusoes],
                     ),
                 ],
             ),
