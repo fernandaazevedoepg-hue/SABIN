@@ -208,3 +208,18 @@ O projeto inclui o relatório Power BI no diretório `powerbi/`.
 O ficheiro pode ser aberto através do Microsoft Power BI Desktop, desde que esteja disponível localmente e exista uma configuração de acesso válida à fonte de dados.
 
 O relatório permite explorar os dados através de dashboards e visualizações analíticas. O comportamento da ligação e a atualização dos dados dependem da configuração da fonte de dados e do ambiente de execução utilizado.
+### 9.1. Certificado do Supabase (Power BI noutro computador)
+
+O Power BI Desktop liga-se ao Supabase com encriptação e, no Windows, só aceita essa ligação se o certificado raiz do Supabase estiver instalado no computador. Sem ele, ao abrir o `sabin.pbix` noutro computador aparece um erro de certificado.
+
+O certificado está na pasta `certificados/` (`prod-ca-2021.crt`, «Supabase Root 2021 CA», válido até 26/04/2031). É um certificado público e não contém credenciais.
+
+Para o instalar:
+
+1. Abrir a pasta `certificados/` no Explorador de Ficheiros.
+2. Fazer duplo clique em `instalar_certificado.bat` e carregar em **Sim** quando o Windows pedir confirmação.
+3. Fechar e voltar a abrir o Power BI Desktop.
+
+Em alternativa, pode instalar-se à mão: duplo clique em `prod-ca-2021.crt` › **Instalar certificado** › **Utilizador atual** › **Colocar todos os certificados no arquivo seguinte** › **Autoridades de Certificação de Raiz Fidedignas**.
+
+A aplicação Python não precisa deste passo.
