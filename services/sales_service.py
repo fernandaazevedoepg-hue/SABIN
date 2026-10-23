@@ -1,7 +1,7 @@
 import os
 
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 
 load_dotenv()
@@ -14,10 +14,7 @@ if not DATABASE_URL:
     )
 
 
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True
-)
+from services.base_dados import engine
 
 
 METODOS_PAGAMENTO = [

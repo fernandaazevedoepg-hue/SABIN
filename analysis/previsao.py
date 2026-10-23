@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 from sklearn.linear_model import Ridge
 from sklearn.metrics import (
@@ -33,10 +33,7 @@ if not DATABASE_URL:
     )
 
 
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,
-)
+from services.base_dados import engine
 
 
 FEATURES = [

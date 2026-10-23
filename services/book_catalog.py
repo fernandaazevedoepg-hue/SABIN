@@ -11,7 +11,7 @@ import requests
 from ddgs import DDGS
 from dotenv import load_dotenv
 from requests.adapters import HTTPAdapter
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from urllib3.util.retry import Retry
 
 
@@ -22,10 +22,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL não encontrada no ficheiro .env")
 
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,
-)
+from services.base_dados import engine
 
 GOOGLE_BOOKS_URL = "https://www.googleapis.com/books/v1/volumes"
 OPEN_LIBRARY_BOOKS_URL = "https://openlibrary.org/api/books"

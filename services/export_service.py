@@ -6,7 +6,7 @@ import sys
 
 import pandas as pd
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -33,7 +33,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL não encontrada no ficheiro .env")
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+from services.base_dados import engine
 
 AZUL_ESCURO = "1F3A5F"
 AZUL_CLARO = "EAF1FF"

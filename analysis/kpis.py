@@ -1,6 +1,7 @@
 import pandas as pd
 
-from etl.extract import DW_SCHEMA, engine
+from etl.extract import DW_SCHEMA
+from services.base_dados import engine
 
 
 def carregar_vendas_dw():

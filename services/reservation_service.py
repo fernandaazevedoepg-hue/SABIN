@@ -2,7 +2,7 @@ import os
 from datetime import date
 
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 from services.sales_service import METODOS_PAGAMENTO
 
@@ -17,10 +17,7 @@ if not DATABASE_URL:
     )
 
 
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,
-)
+from services.base_dados import engine
 
 
 def expirar_reservas():
@@ -105,10 +102,7 @@ def carregar_reservas():
             ON c.id = r.cliente_id
         JOIN public.livros l
             ON l.id = r.livro_id
-        ORDER BY
-            CASE WHEN r.status = 'Pendente' THEN 0 ELSE 1 END,
-            r.data_limite ASC,
-            r.id DESC;
+        ORDER BY r.data_reserva DESC, r.id DESC;
     """)
 
     with engine.connect() as connection:
