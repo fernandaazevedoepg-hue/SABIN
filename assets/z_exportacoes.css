@@ -98,3 +98,42 @@
         min-height: auto;
     }
 }
+
+/* Período do relatório */
+
+.export-period-panel {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    margin-bottom: 18px;
+    padding: 18px 22px;
+    background: #ffffff;
+    border: 1px solid #d8e0ea;
+    border-radius: 12px;
+}
+
+.export-period-panel h3 {
+    margin: 0 0 6px 0;
+    color: #172033;
+    font-size: 17px;
+}
+
+.export-period-panel p {
+    margin: 0;
+    color: #607089;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.export-period-panel .dash-datepicker {
+    flex-shrink: 0;
+    min-width: 260px;
+}
+
+@media (max-width: 900px) {
+    .export-period-panel {
+        flex-direction: column;
+        align-items: stretch;
+    }
+}

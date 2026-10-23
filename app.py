@@ -4241,6 +4241,29 @@ def pagina_exportacoes():
                 id="download-powerbi"
             ),
             html.Div(
+                className="export-period-panel",
+                children=[
+                    html.Div(
+                        children=[
+                            html.H3("Período do relatório"),
+                            html.P(
+                                "Escolhe as datas para o Excel e o PDF. Sem datas, o relatório inclui todo o histórico. O stock e o catálogo mostram sempre o estado atual."
+                            ),
+                        ],
+                    ),
+                    dcc.DatePickerRange(
+                        id="export-period",
+                        display_format="DD/MM/YYYY",
+                        start_date_placeholder_text="De",
+                        end_date_placeholder_text="Até",
+                        first_day_of_week=1,
+                        clearable=True,
+                        max_date_allowed=date.today(),
+                        className="export-date-range",
+                    ),
+                ],
+            ),
+            html.Div(
                 className="export-actions-grid",
                 children=[
                     html.Div(
@@ -4912,18 +4935,22 @@ def navegar(
     Input("export-excel-button", "n_clicks"),
     Input("export-pdf-button", "n_clicks"),
     Input("export-powerbi-button", "n_clicks"),
+    State("export-period", "start_date"),
+    State("export-period", "end_date"),
     prevent_initial_call=True,
 )
 def processar_exportacoes(
     excel_clicks,
     pdf_clicks,
     powerbi_clicks,
+    data_inicio,
+    data_fim,
 ):
     acao = ctx.triggered_id
 
     try:
         if acao == "export-excel-button":
-            caminho = gerar_excel()
+            caminho = gerar_excel(data_inicio, data_fim)
 
             return (
                 dcc.send_file(str(caminho)),
@@ -4936,7 +4963,7 @@ def processar_exportacoes(
             )
 
         if acao == "export-pdf-button":
-            caminho = gerar_pdf()
+            caminho = gerar_pdf(data_inicio, data_fim)
 
             return (
                 no_update,

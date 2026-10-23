@@ -44,23 +44,67 @@ BORDA = Side(style="thin", color=CINZA_BORDA)
 FORMATO_EUROS = '#,##0.00 "€"' 
 
 
-def ler_df(sql):
+def ler_df(sql, params=None):
     """Executa uma consulta SQL e devolve os resultados num DataFrame."""
     with engine.connect() as connection:
-        return pd.read_sql(text(sql), connection)
+        return pd.read_sql(text(sql), connection, params=params)
 
 
-def carregar_kpis():
+def normalizar_periodo(data_inicio=None, data_fim=None):
+    """Converte as datas escolhidas (texto AAAA-MM-DD ou date) e valida o intervalo."""
+    inicio = pd.to_datetime(data_inicio).date() if data_inicio else None
+    fim = pd.to_datetime(data_fim).date() if data_fim else None
+    if inicio and fim and inicio > fim:
+        raise ValueError("A data inicial não pode ser posterior à data final.")
+    return inicio, fim
+
+
+def filtro_periodo(inicio, fim):
+    """Devolve a condição SQL e os parâmetros que limitam as vendas ao período."""
+    condicoes = []
+    params = {}
+    if inicio:
+        condicoes.append("AND v.data_venda::date >= :data_inicio")
+        params["data_inicio"] = inicio
+    if fim:
+        condicoes.append("AND v.data_venda::date <= :data_fim")
+        params["data_fim"] = fim
+    return " ".join(condicoes), params
+
+
+def descrever_periodo(inicio, fim):
+    """Texto do período usado nos títulos do Excel e do PDF."""
+    if inicio and fim:
+        return f"Período: {inicio:%d/%m/%Y} a {fim:%d/%m/%Y}"
+    if inicio:
+        return f"Período: desde {inicio:%d/%m/%Y}"
+    if fim:
+        return f"Período: até {fim:%d/%m/%Y}"
+    return "Período: todo o histórico"
+
+
+def sufixo_periodo(inicio, fim):
+    """Parte do nome do ficheiro que identifica o período escolhido."""
+    if not inicio and not fim:
+        return ""
+    parte_inicio = f"{inicio:%Y%m%d}" if inicio else "inicio"
+    parte_fim = f"{fim:%Y%m%d}" if fim else "hoje"
+    return f"_{parte_inicio}_{parte_fim}"
+
+
+def carregar_kpis(inicio=None, fim=None):
     """Carrega os indicadores usados nos relatórios exportados."""
-    linha = ler_df("""
+    condicao, params = filtro_periodo(inicio, fim)
+    linha = ler_df(f"""
         SELECT
             COALESCE(SUM(iv.subtotal), 0) AS receita_total,
             COUNT(DISTINCT v.id) AS numero_vendas,
             COALESCE(SUM(iv.quantidade), 0) AS unidades_vendidas
         FROM public.vendas v
         JOIN public.itens_venda iv ON iv.venda_id = v.id
-        WHERE v.status = 'Concluída';
-    """).iloc[0]
+        WHERE v.status = 'Concluída'
+        {condicao};
+    """, params).iloc[0]
 
     receita = float(linha["receita_total"])
     vendas = int(linha["numero_vendas"])
@@ -89,9 +133,10 @@ def carregar_metricas():
         return {}
 
 
-def carregar_vendas():
+def carregar_vendas(inicio=None, fim=None):
     """Carrega os dados de vendas para exportação."""
-    return ler_df("""
+    condicao, params = filtro_periodo(inicio, fim)
+    return ler_df(f"""
         SELECT
             v.data_venda AS data,
             v.id AS venda_id,
@@ -108,8 +153,9 @@ def carregar_vendas():
         JOIN public.livros l ON l.id = iv.livro_id
         LEFT JOIN public.clientes c ON c.id = v.cliente_id
         WHERE v.status = 'Concluída'
+        {condicao}
         ORDER BY v.data_venda, v.id, iv.id;
-    """)
+    """, params)
 
 
 def carregar_livros():
@@ -142,9 +188,10 @@ def carregar_livros():
     """)
 
 
-def carregar_clientes():
+def carregar_clientes(inicio=None, fim=None):
     """Carrega os dados dos clientes para exportação."""
-    return ler_df("""
+    condicao, params = filtro_periodo(inicio, fim)
+    return ler_df(f"""
         SELECT
             c.id,
             c.nome_completo,
@@ -166,10 +213,11 @@ def carregar_clientes():
             JOIN public.itens_venda iv ON iv.venda_id = v.id
             WHERE v.status = 'Concluída'
               AND v.cliente_id IS NOT NULL
+              {condicao}
             GROUP BY v.cliente_id
         ) compras ON compras.cliente_id = c.id
         ORDER BY c.nome_completo;
-    """)
+    """, params)
 
 
 def carregar_stock():
@@ -199,21 +247,38 @@ def carregar_stock():
     """)
 
 
-def carregar_previsoes():
-    """Carrega as previsões de receita para exportação."""
-    return carregar_previsao_receita_dw(engine)
+def carregar_previsoes(inicio=None, fim=None):
+    """Carrega as previsões de receita; o histórico fica limitado ao período."""
+    previsoes = carregar_previsao_receita_dw(engine)
+    if previsoes.empty or (not inicio and not fim):
+        return previsoes
+    meses = pd.to_datetime(previsoes["mes"]).dt.to_period("M")
+    dentro = pd.Series(True, index=previsoes.index)
+    if inicio:
+        dentro &= meses >= pd.Period(inicio, "M")
+    if fim:
+        dentro &= meses <= pd.Period(fim, "M")
+    # As estimativas do modelo mantêm-se sempre, mesmo fora do período.
+    return previsoes[dentro | previsoes["receita_real"].isna()].reset_index(drop=True)
 
 
-def dados_exportacao():
-    """Reúne os dados necessários para gerar os ficheiros de exportação."""
+def dados_exportacao(data_inicio=None, data_fim=None):
+    """Reúne os dados necessários para gerar os ficheiros de exportação.
+
+    O período limita as vendas, os indicadores, as compras dos clientes e o
+    histórico de receita. Livros e stock mostram sempre o estado atual.
+    """
+    inicio, fim = normalizar_periodo(data_inicio, data_fim)
     return {
-        "kpis": carregar_kpis(),
+        "periodo": descrever_periodo(inicio, fim),
+        "sufixo": sufixo_periodo(inicio, fim),
+        "kpis": carregar_kpis(inicio, fim),
         "metricas": carregar_metricas(),
-        "Vendas": carregar_vendas(),
+        "Vendas": carregar_vendas(inicio, fim),
         "Livros": carregar_livros(),
-        "Clientes": carregar_clientes(),
+        "Clientes": carregar_clientes(inicio, fim),
         "Stock": carregar_stock(),
-        "Previsoes": carregar_previsoes(),
+        "Previsoes": carregar_previsoes(inicio, fim),
     }
 
 
@@ -257,7 +322,10 @@ def criar_resumo_excel(workbook, dados):
     folha = workbook.active
     folha.title = "Resumo"
     folha.sheet_view.showGridLines = False
-    titulo_folha(folha, 4, "SABIN — Relatório de Gestão", "Resumo executivo da Bookmarked")
+    titulo_folha(
+        folha, 4, "SABIN — Relatório de Gestão",
+        f"Resumo executivo da Bookmarked | {dados['periodo']}",
+    )
 
     kpis = dados["kpis"]
     metricas = dados["metricas"]
@@ -395,12 +463,12 @@ def criar_folha_dados(workbook, nome, dataframe, mapa, titulo, descricao):
     folha.freeze_panes = "A5"
 
 
-def gerar_excel():
+def gerar_excel(data_inicio=None, data_fim=None):
     """Cria um ficheiro Excel com indicadores, tabelas e dados de apoio."""
     EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    dados = dados_exportacao()
+    dados = dados_exportacao(data_inicio, data_fim)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    caminho = EXPORTS_DIR / f"SABIN_Relatorio_Gestao_{timestamp}.xlsx"
+    caminho = EXPORTS_DIR / f"SABIN_Relatorio_Gestao{dados['sufixo']}_{timestamp}.xlsx"
     workbook = Workbook()
     criar_resumo_excel(workbook, dados)
 
@@ -413,7 +481,7 @@ def gerar_excel():
                 "preco_unitario": "Preço Unitário (€)", "subtotal": "Subtotal (€)",
             },
             "Vendas Concluídas",
-            "Detalhe dos itens pertencentes às vendas concluídas.",
+            f"Detalhe dos itens pertencentes às vendas concluídas. {dados['periodo']}",
         ),
         "Livros": (
             {
@@ -423,7 +491,7 @@ def gerar_excel():
                 "stock_disponivel": "Stock Disponível", "autores": "Autores", "generos": "Géneros",
             },
             "Catálogo de Livros",
-            "Informação atual do catálogo e da disponibilidade de stock.",
+            "Informação atual do catálogo e da disponibilidade de stock (não depende do período).",
         ),
         "Clientes": (
             {
@@ -433,7 +501,7 @@ def gerar_excel():
                 "numero_compras": "Número de Compras", "unidades_compradas": "Unidades Compradas",
             },
             "Clientes",
-            "Compras distintas, unidades e montantes de vendas concluídas por cliente.",
+            f"Compras distintas, unidades e montantes de vendas concluídas por cliente. {dados['periodo']}",
         ),
         "Stock": (
             {
@@ -446,7 +514,7 @@ def gerar_excel():
                 "nivel": "Nível", "recomendacao": "Recomendação",
             },
             "Stock e Reposição",
-            "Indicadores utilizados para análise de cobertura e reposição.",
+            "Indicadores utilizados para análise de cobertura e reposição (estado atual, não depende do período).",
         ),
         "Previsoes": (
             {
@@ -454,7 +522,7 @@ def gerar_excel():
                 "receita_prevista": "Receita Prevista (€)", "tipo": "Tipo",
             },
             "Previsões de Receita",
-            "Histórico observado e estimativas produzidas pelo modelo preditivo.",
+            f"Histórico observado e estimativas produzidas pelo modelo preditivo. {dados['periodo']}",
         ),
     }
 
@@ -514,13 +582,14 @@ def rodape_pdf(canvas, documento):
     canvas.restoreState()
 
 
-def gerar_pdf():
+def gerar_pdf(data_inicio=None, data_fim=None):
     """Cria um relatório PDF com os principais resultados do SABIN."""
     import math
     from html import escape
 
     EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    dados = dados_exportacao()
+    dados = dados_exportacao(data_inicio, data_fim)
+    todo_historico = not dados["sufixo"]
     kpis = dados.get("kpis") or {}
     metricas = dados.get("metricas") or {}
     vendas = dados.get("Vendas")
@@ -634,7 +703,7 @@ def gerar_pdf():
         top_livros = top_livros[top_livros["quantidade"] > 0]
 
     caminho = EXPORTS_DIR / (
-        f"SABIN_Relatorio_Gestao_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        f"SABIN_Relatorio_Gestao{dados['sufixo']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
     )
     documento = SimpleDocTemplate(
         str(caminho), pagesize=A4,
@@ -715,6 +784,7 @@ def gerar_pdf():
     elementos.extend([
         Paragraph("SABIN", estilo_titulo),
         Paragraph("Relatório de Gestão da Bookmarked", estilo_subtitulo),
+        Paragraph(seguro(dados["periodo"]), estilo_subtitulo),
         Paragraph(
             "Gerado em " + datetime.now().strftime("%d/%m/%Y às %H:%M"),
             estilo_subtitulo,
@@ -726,10 +796,15 @@ def gerar_pdf():
     if n_vendas:
         partes = [
             f"A Bookmarked regista {numero(n_vendas)} vendas concluídas "
-            f"e {euro(receita)} de receita acumulada."
+            f"e {euro(receita)} de receita "
+            + ("acumulada." if todo_historico else "no período selecionado.")
         ]
     else:
-        partes = ["Ainda não há vendas concluídas para avaliar o desempenho comercial."]
+        partes = [
+            "Ainda não há vendas concluídas para avaliar o desempenho comercial."
+            if todo_historico else
+            "Não há vendas concluídas no período selecionado."
+        ]
     if not stock.empty:
         partes.append(
             f"Na análise de stock, {len(criticos)} títulos estão em estado crítico "
@@ -765,10 +840,11 @@ def gerar_pdf():
     elementos.append(cards)
     if n_vendas:
         bloco(
-            f"O histórico contém {numero(n_vendas)} vendas concluídas, "
+            ("O histórico contém " if todo_historico else "O período selecionado contém ")
+            + f"{numero(n_vendas)} vendas concluídas, "
             f"{numero(unidades)} unidades vendidas e {euro(receita)} de receita. "
             f"O ticket médio é de {euro(ticket)} por venda. "
-            "Estes valores são acumulados e, isoladamente, não demonstram "
+            "Estes valores são totais do período e, isoladamente, não demonstram "
             "se o negócio cresceu ou diminuiu face a outro período."
         )
     else:
@@ -923,7 +999,8 @@ def gerar_pdf():
     elementos.append(Spacer(1, 2 * mm))
     paragrafo(
         "Relatório gerado automaticamente pelo SABIN. Os indicadores comerciais "
-        "consideram apenas vendas concluídas. As previsões são estimativas e as "
+        "consideram apenas vendas concluídas do período indicado. O stock reflete o "
+        "estado atual. As previsões são estimativas e as "
         "recomendações de stock devem ser validadas antes de efetuar compras."
     )
 
