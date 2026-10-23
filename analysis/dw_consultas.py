@@ -200,6 +200,49 @@ def carregar_previsao_receita(engine):
     return pd.concat(partes, ignore_index=True)
 
 
+def carregar_receita_diaria(engine):
+    """Receita real, número de vendas e unidades de cada dia com vendas."""
+    dados = _ler(engine, f"""
+        SELECT
+            d.data,
+            ROUND(SUM(f.receita_atribuida), 2) AS receita,
+            COUNT(DISTINCT f.venda_id_origem) AS vendas,
+            ROUND(SUM(f.quantidade_atribuida)) AS unidades
+        FROM {DW_SCHEMA}.fact_vendas f
+        JOIN {DW_SCHEMA}.dim_data d
+            ON d.data_key = f.data_key
+        GROUP BY d.data
+        ORDER BY d.data;
+    """)
+
+    dados["data"] = pd.to_datetime(dados["data"])
+    dados["receita"] = pd.to_numeric(dados["receita"])
+    dados["vendas"] = pd.to_numeric(dados["vendas"])
+    dados["unidades"] = pd.to_numeric(dados["unidades"])
+
+    return dados
+
+
+def carregar_top_livros_periodo(engine, inicio, fim, limite=5):
+    """Livros com mais receita entre `inicio` (incluído) e `fim` (excluído)."""
+    return _ler(engine, f"""
+        SELECT
+            l.titulo,
+            ROUND(SUM(f.quantidade_atribuida)) AS unidades,
+            ROUND(SUM(f.receita_atribuida), 2) AS receita
+        FROM {DW_SCHEMA}.fact_vendas f
+        JOIN {DW_SCHEMA}.dim_data d
+            ON d.data_key = f.data_key
+        JOIN {DW_SCHEMA}.dim_livro l
+            ON l.livro_key = f.livro_key
+        WHERE d.data >= :inicio
+          AND d.data < :fim
+        GROUP BY l.titulo
+        ORDER BY receita DESC, l.titulo
+        LIMIT :limite;
+    """, {"inicio": inicio, "fim": fim, "limite": limite})
+
+
 SQL_ALERTAS_PREVISAO = f"""
     SELECT
         d.data AS periodo,

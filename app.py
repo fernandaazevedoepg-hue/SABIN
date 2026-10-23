@@ -31,6 +31,8 @@ from analysis.dw_consultas import (
     SQL_STOCK_ATUAL,
     carregar_metricas_previsao as carregar_metricas_previsao_dw,
     carregar_previsao_receita as carregar_previsao_receita_dw,
+    carregar_receita_diaria,
+    carregar_top_livros_periodo,
 )
 
 from services.book_catalog import procurar_livro
@@ -674,18 +676,97 @@ def criar_grafico_top_livros(dados):
     return figura
 
 
-def criar_grafico_previsao(dados):
-    """Constrói o gráfico que compara os valores reais e previstos."""
-    historico = dados[
-        (
-            dados["tipo"] == "Histórico"
-        )
-        & dados["receita_real"].notna()
-    ]
+MESES_PT = [
+    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+]
+MESES_PT_ABREV = [
+    "jan", "fev", "mar", "abr", "mai", "jun",
+    "jul", "ago", "set", "out", "nov", "dez",
+]
 
-    previsao = dados[
-        dados["receita_prevista"].notna()
-    ]
+COR_REAL = "#2563eb"
+COR_PREVISTA = "#14b8a6"
+
+
+def nome_mes_ano(data, abreviado=False):
+    """«Novembro de 2025» ou «nov/2025»."""
+    data = pd.Timestamp(data)
+
+    if abreviado:
+        return f"{MESES_PT_ABREV[data.month - 1]}/{data.year}"
+
+    return f"{MESES_PT[data.month - 1]} de {data.year}"
+
+
+def serie_mensal_previsao(dados):
+    """Uma linha por mês, com a receita real e a receita prevista."""
+    real = dados[
+        (dados["tipo"] == "Histórico")
+        & dados["receita_real"].notna()
+    ][["mes", "receita_real"]]
+
+    prevista = dados[
+        dados["tipo"] == "Previsão"
+    ][["mes", "receita_prevista"]]
+
+    serie = real.merge(prevista, on="mes", how="outer")
+    serie = serie.sort_values("mes").reset_index(drop=True)
+
+    return serie.fillna(
+        {
+            "receita_real": 0.0,
+            "receita_prevista": 0.0,
+        }
+    )
+
+
+def ajustar_layout_previsao(figura):
+    """Aspeto comum a todas as vistas do gráfico de previsões."""
+    figura.update_layout(
+        height=390,
+        margin={"l": 10, "r": 10, "t": 30, "b": 10},
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        hovermode="closest",
+        font={"family": "Inter, Segoe UI, Arial, sans-serif", "color": "#475569", "size": 12},
+        hoverlabel={"bgcolor": "white", "bordercolor": "#e2e8f0", "font": {"color": "#0f172a"}},
+        separators=", ",
+        barmode="stack",
+        bargap=0.3,
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.02,
+            "xanchor": "right",
+            "x": 1,
+            "traceorder": "normal",
+        },
+    )
+
+    figura.update_xaxes(
+        showgrid=False,
+        showline=True,
+        linecolor="#e2e8f0",
+        title_font={"size": 12, "color": "#94a3b8"},
+    )
+
+    figura.update_yaxes(
+        title=None,
+        gridcolor="#f1f5f9",
+        rangemode="tozero",
+        ticksuffix=" €",
+        zeroline=False,
+    )
+
+    return figura
+
+
+def criar_grafico_previsao(dados):
+    """Vista por mês: receita real (linha) e previsão (linha tracejada)."""
+    serie = serie_mensal_previsao(dados)
+    historico = serie[serie["receita_real"] > 0]
+    futuro = serie[serie["receita_prevista"] > 0]
 
     figura = go.Figure()
 
@@ -693,63 +774,224 @@ def criar_grafico_previsao(dados):
         go.Scatter(
             x=historico["mes"],
             y=historico["receita_real"],
-            mode="lines",
-            name="Receita Histórica",
-            line={
-                "color": "#2563eb",
-                "width": 3,
-            },
-        )
-    )
-
-    figura.add_trace(
-        go.Scatter(
-            x=previsao["mes"],
-            y=previsao["receita_prevista"],
             mode="lines+markers",
-            name="Receita Prevista",
-            line={
-                "color": "#14b8a6",
-                "width": 3,
-                "dash": "dot",
-            },
-            marker={
-                "size": 7,
-            },
+            name="Real",
+            line={"color": COR_REAL, "width": 2.5},
+            marker={"size": 7, "color": "white", "line": {"color": COR_REAL, "width": 2}},
+            fill="tozeroy",
+            fillcolor="rgba(37, 99, 235, 0.07)",
+            customdata=[nome_mes_ano(mes) for mes in historico["mes"]],
+            hovertemplate="%{customdata}<br>Real: %{y:,.2f} €<extra></extra>",
         )
     )
 
-    figura.update_layout(
-        height=390,
-        margin={
-            "l": 20,
-            "r": 20,
-            "t": 10,
-            "b": 20,
-        },
-        plot_bgcolor="white",
-        paper_bgcolor="white",
-        hovermode="x unified",
-        legend={
-            "orientation": "h",
-            "yanchor": "bottom",
-            "y": 1.02,
-            "xanchor": "left",
-            "x": 0,
-        },
-    )
+    if not futuro.empty:
+        # A previsão começa no último mês real, para as linhas ficarem ligadas.
+        ligacao = historico.tail(1)
+        x_previsto = list(ligacao["mes"]) + list(futuro["mes"])
+        y_previsto = list(ligacao["receita_real"]) + list(futuro["receita_prevista"])
+
+        figura.add_trace(
+            go.Scatter(
+                x=x_previsto,
+                y=y_previsto,
+                mode="lines+markers",
+                name="Previsão",
+                line={"color": COR_PREVISTA, "width": 2.5, "dash": "dot"},
+                marker={"size": 7, "color": "white", "line": {"color": COR_PREVISTA, "width": 2}},
+                customdata=[nome_mes_ano(mes) for mes in x_previsto],
+                hovertemplate="%{customdata}<br>Previsão: %{y:,.2f} €<extra></extra>",
+            )
+        )
+
+    # Uma etiqueta a cada 6 meses, em português, para o eixo não ficar cheio.
+    marcas = list(serie["mes"])[::6]
 
     figura.update_xaxes(
-        tickformat="%m/%Y",
-        gridcolor="#e2e8f0",
+        tickvals=marcas,
+        ticktext=[nome_mes_ano(mes, abreviado=True) for mes in marcas],
+        tickangle=0,
     )
 
-    figura.update_yaxes(
-        title="Receita (€)",
-        gridcolor="#e2e8f0",
+    return ajustar_layout_previsao(figura)
+
+
+def criar_barras_previsao(rotulos, real, prevista, titulo_x, nomes_hover=None):
+    """Barras de receita real com a previsão empilhada por cima."""
+    nomes_hover = nomes_hover or rotulos
+    figura = go.Figure()
+
+    figura.add_trace(
+        go.Bar(
+            x=rotulos,
+            y=real,
+            name="Real",
+            marker={"color": COR_REAL, "cornerradius": 4},
+            customdata=nomes_hover,
+            hovertemplate="%{customdata}<br>Real: %{y:,.2f} €<extra></extra>",
+        )
     )
 
-    return figura
+    if sum(prevista) > 0:
+        figura.add_trace(
+            go.Bar(
+                x=rotulos,
+                y=prevista,
+                name="Previsão",
+                marker={"color": "rgba(20, 184, 166, 0.55)", "cornerradius": 4},
+                customdata=nomes_hover,
+                hovertemplate="%{customdata}<br>Previsão: %{y:,.2f} €<extra></extra>",
+            )
+        )
+
+    figura.update_xaxes(title=titulo_x, type="category", tickangle=0)
+
+    return ajustar_layout_previsao(figura)
+
+
+def rotulo_periodo_previsao(periodo):
+    """Nome de um período escolhido: «2025», «T4 2025» ou «Novembro de 2025»."""
+    if periodo.get("mes"):
+        return f"{MESES_PT[periodo['mes'] - 1]} de {periodo['ano']}"
+
+    if periodo.get("trimestre"):
+        return f"T{periodo['trimestre']} {periodo['ano']}"
+
+    return str(periodo["ano"])
+
+
+def limites_periodo_previsao(periodo):
+    """Início (incluído) e fim (excluído) de um período escolhido."""
+    if periodo.get("mes"):
+        inicio = pd.Timestamp(year=periodo["ano"], month=periodo["mes"], day=1)
+        return inicio, inicio + pd.DateOffset(months=1)
+
+    if periodo.get("trimestre"):
+        inicio = pd.Timestamp(
+            year=periodo["ano"],
+            month=(periodo["trimestre"] - 1) * 3 + 1,
+            day=1,
+        )
+        return inicio, inicio + pd.DateOffset(months=3)
+
+    inicio = pd.Timestamp(year=periodo["ano"], month=1, day=1)
+    return inicio, inicio + pd.DateOffset(years=1)
+
+
+def figura_previsao_periodo(granularidade, periodo, dados):
+    """Escolhe a vista do gráfico conforme o nível e o período escolhidos."""
+    serie = serie_mensal_previsao(dados)
+
+    if periodo is None:
+        if granularidade == "mes":
+            return criar_grafico_previsao(dados)
+
+        if granularidade == "trimestre":
+            grupos = serie.groupby(
+                [serie["mes"].dt.year, serie["mes"].dt.quarter]
+            )[["receita_real", "receita_prevista"]].sum()
+            rotulos = [f"T{trimestre}<br>{ano}" for ano, trimestre in grupos.index]
+            return criar_barras_previsao(
+                rotulos,
+                list(grupos["receita_real"]),
+                list(grupos["receita_prevista"]),
+                "Trimestre",
+            )
+
+        grupos = serie.groupby(serie["mes"].dt.year)[
+            ["receita_real", "receita_prevista"]
+        ].sum()
+        return criar_barras_previsao(
+            [str(ano) for ano in grupos.index],
+            list(grupos["receita_real"]),
+            list(grupos["receita_prevista"]),
+            "Ano",
+        )
+
+    inicio, fim = limites_periodo_previsao(periodo)
+
+    if periodo.get("mes"):
+        diario = carregar_receita_diaria(engine)
+        diario = diario[(diario["data"] >= inicio) & (diario["data"] < fim)]
+        por_dia = diario.groupby(diario["data"].dt.day)["receita"].sum()
+        dias = list(range(1, (fim - inicio).days + 1))
+
+        figura = criar_barras_previsao(
+            [str(dia) for dia in dias],
+            [float(por_dia.get(dia, 0)) for dia in dias],
+            [0] * len(dias),
+            "Dia",
+            [f"{dia} de {MESES_PT[inicio.month - 1]}" for dia in dias],
+        )
+
+        prevista = serie[serie["mes"] == inicio]["receita_prevista"].sum()
+
+        if por_dia.sum() == 0 and prevista > 0:
+            figura.add_annotation(
+                text=(
+                    "Ainda sem vendas neste mês<br>"
+                    f"Previsão do modelo: {formatar_euro(prevista)}"
+                ),
+                xref="paper",
+                yref="paper",
+                x=0.5,
+                y=0.5,
+                showarrow=False,
+                font={"size": 15, "color": "#0f766e"},
+            )
+            figura.update_yaxes(showticklabels=False, showgrid=False, title=None)
+
+        return figura
+
+    meses = serie[(serie["mes"] >= inicio) & (serie["mes"] < fim)]
+    todos = pd.date_range(inicio, fim - pd.Timedelta(days=1), freq="MS")
+    meses = meses.set_index("mes").reindex(todos, fill_value=0)
+
+    return criar_barras_previsao(
+        [MESES_PT[mes.month - 1] for mes in todos],
+        list(meses["receita_real"]),
+        list(meses["receita_prevista"]),
+        "Mês",
+        [nome_mes_ano(mes) for mes in todos],
+    )
+
+
+def resumo_periodo_previsao(periodo, dados):
+    """Linha de resumo por baixo do gráfico quando se escolhe um período."""
+    inicio, fim = limites_periodo_previsao(periodo)
+    diario = carregar_receita_diaria(engine)
+    diario = diario[(diario["data"] >= inicio) & (diario["data"] < fim)]
+
+    serie = serie_mensal_previsao(dados)
+    prevista = serie[
+        (serie["mes"] >= inicio) & (serie["mes"] < fim)
+    ]["receita_prevista"].sum()
+
+    top = carregar_top_livros_periodo(engine, inicio.date(), fim.date(), limite=1)
+
+    itens = [
+        ("Receita real", formatar_euro(diario["receita"].sum())),
+        ("Vendas", formatar_inteiro(diario["vendas"].sum())),
+        ("Unidades", formatar_inteiro(diario["unidades"].sum())),
+    ]
+
+    if prevista > 0:
+        itens.append(("Previsão", formatar_euro(prevista), "forecast-detail-prevista"))
+
+    if not top.empty:
+        itens.append(("Livro com mais receita", top.iloc[0]["titulo"], "forecast-detail-livro"))
+
+    return [
+        html.Div(
+            className=f"forecast-detail-item {classe}".strip(),
+            title=valor,
+            children=[html.Span(rotulo), html.Strong(valor)],
+        )
+        for rotulo, valor, classe in [
+            item if len(item) == 3 else (*item, "")
+            for item in itens
+        ]
+    ]
 
 
 def criar_grafico_stock(dados):
@@ -2969,14 +3211,61 @@ def pagina_previsoes():
                     html.Div(
                         className="chart-panel",
                         children=[
-                            html.H3(
-                                "Receita Histórica e Previsão"
+                            html.Div(
+                                className="forecast-chart-header",
+                                children=[
+                                    html.H3(
+                                        "Receita Histórica e Previsão"
+                                    ),
+                                    dcc.RadioItems(
+                                        id="forecast-granularity",
+                                        options=[
+                                            {"label": "Mês", "value": "mes"},
+                                            {"label": "Trimestre", "value": "trimestre"},
+                                            {"label": "Ano", "value": "ano"},
+                                        ],
+                                        value="mes",
+                                        inline=True,
+                                        className="forecast-granularity",
+                                    ),
+                                ],
+                            ),
+                            html.Div(
+                                className="forecast-path-row",
+                                children=[
+                                    html.Button(
+                                        "← Voltar",
+                                        id="forecast-back",
+                                        className="forecast-back-button",
+                                        n_clicks=0,
+                                        style={"display": "none"},
+                                    ),
+                                    html.Span(
+                                        "Todos os meses",
+                                        id="forecast-path",
+                                        className="forecast-path",
+                                    ),
+                                    html.Span(
+                                        "Clica num mês, trimestre ou ano para ver o detalhe.",
+                                        id="forecast-hint",
+                                        className="forecast-hint",
+                                    ),
+                                ],
+                            ),
+                            dcc.Store(
+                                id="forecast-drill-state",
+                                data={"pilha": []},
                             ),
                             dcc.Graph(
+                                id="forecast-main-graph",
                                 figure=figura,
                                 config={
                                     "displayModeBar": False,
                                 },
+                            ),
+                            html.Div(
+                                id="forecast-detail",
+                                className="forecast-detail",
                             ),
                         ],
                     ),
@@ -6376,6 +6665,109 @@ def atualizar_carrinho(
         formatar_euro(
             total
         ),
+    )
+
+
+# Previsões: descer e subir de nível no gráfico (como o Drillthrough)
+
+@app.callback(
+    Output("forecast-drill-state", "data"),
+    Output("forecast-main-graph", "clickData"),
+    Input("forecast-main-graph", "clickData"),
+    Input("forecast-back", "n_clicks"),
+    Input("forecast-granularity", "value"),
+    State("forecast-drill-state", "data"),
+    prevent_initial_call=True,
+)
+def navegar_grafico_previsao(clique, _voltar, granularidade, estado):
+    """Guarda o caminho de períodos escolhidos ao clicar no gráfico."""
+    pilha = list((estado or {}).get("pilha") or [])
+    origem = ctx.triggered_id
+
+    if origem == "forecast-granularity":
+        return {"pilha": []}, None
+
+    if origem == "forecast-back":
+        return {"pilha": pilha[:-1]}, None
+
+    if not clique:
+        return no_update, None
+
+    rotulo = str(clique["points"][0].get("x") or "")
+    atual = pilha[-1] if pilha else None
+
+    if atual is None:
+        if granularidade == "mes":
+            mes = pd.Timestamp(rotulo)
+            pilha.append({"ano": mes.year, "mes": mes.month})
+        elif granularidade == "trimestre":
+            encontrado = re.fullmatch(r"T([1-4])(?:<br>| )(\d{4})", rotulo)
+            if not encontrado:
+                return no_update, None
+            pilha.append(
+                {
+                    "ano": int(encontrado.group(2)),
+                    "trimestre": int(encontrado.group(1)),
+                }
+            )
+        elif rotulo.isdigit():
+            pilha.append({"ano": int(rotulo)})
+        else:
+            return no_update, None
+    elif atual.get("mes"):
+        # Já está nos dias: não há nível abaixo.
+        return no_update, None
+    elif rotulo in MESES_PT:
+        pilha.append(
+            {
+                "ano": atual["ano"],
+                "mes": MESES_PT.index(rotulo) + 1,
+            }
+        )
+    else:
+        return no_update, None
+
+    return {"pilha": pilha}, None
+
+
+@app.callback(
+    Output("forecast-main-graph", "figure"),
+    Output("forecast-path", "children"),
+    Output("forecast-back", "style"),
+    Output("forecast-hint", "children"),
+    Output("forecast-detail", "children"),
+    Input("forecast-drill-state", "data"),
+    Input("forecast-granularity", "value"),
+)
+def atualizar_grafico_previsao(estado, granularidade):
+    """Desenha o gráfico do nível atual e o resumo do período escolhido."""
+    pilha = (estado or {}).get("pilha") or []
+    periodo = pilha[-1] if pilha else None
+    dados = carregar_previsao_receita()
+
+    base = {
+        "mes": "Todos os meses",
+        "trimestre": "Todos os trimestres",
+        "ano": "Todos os anos",
+    }.get(granularidade, "Todos os meses")
+
+    caminho = " › ".join(
+        [base] + [rotulo_periodo_previsao(item) for item in pilha]
+    )
+
+    if periodo is None:
+        dica = "Clica num mês, trimestre ou ano para ver o detalhe."
+    elif periodo.get("mes"):
+        dica = "Receita de cada dia do mês."
+    else:
+        dica = "Clica num mês para ver os dias."
+
+    return (
+        figura_previsao_periodo(granularidade, periodo, dados),
+        caminho,
+        {} if pilha else {"display": "none"},
+        dica,
+        resumo_periodo_previsao(periodo, dados) if periodo else [],
     )
 
 

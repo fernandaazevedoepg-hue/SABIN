@@ -1,139 +1,155 @@
-#page-content .export-page {
-    width: 100%;
-    max-width: none;
-    margin: 0;
-}
+/* Previsões: gráfico com níveis (Mês / Trimestre / Ano) e detalhe do período.*/
 
-.export-page .page-header {
-    margin-bottom: 20px;
-}
-
-.export-actions-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 18px;
-    width: 100%;
-}
-
-.export-action-card {
+.forecast-chart-header {
     display: flex;
-    flex-direction: column;
-    min-height: 205px;
-    padding: 22px;
-    box-sizing: border-box;
-    background: #ffffff;
-    border: 1px solid #d8e0ea;
-    border-radius: 12px;
-    box-shadow: 0 2px 8px rgba(31, 58, 95, 0.04);
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
 }
 
-.export-action-content {
-    flex: 1;
-}
-
-.export-action-card h3 {
-    margin: 0 0 8px 0;
-    color: #172033;
-    font-size: 19px;
-}
-
-.export-action-card p {
+.forecast-chart-header h3 {
     margin: 0;
-    color: #607089;
+}
+
+/* Botões Mês / Trimestre / Ano (controlo segmentado) */
+
+.forecast-granularity {
+    display: inline-flex;
+    gap: 2px;
+    padding: 4px;
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+}
+
+.forecast-granularity label {
+    display: inline-flex;
+    align-items: center;
+    margin: 0;
+    padding: 6px 16px;
+    border-radius: 7px;
     font-size: 13px;
-    line-height: 1.55;
-}
-
-.export-action-button {
-    width: 100%;
-    min-height: 46px;
-    margin-top: 22px;
-    padding: 0 18px;
-    border: 1px solid #2f6fed;
-    border-radius: 8px;
-    background: #2f6fed;
-    color: #ffffff;
-    font-size: 14px;
-    font-weight: 700;
+    font-weight: 500;
+    color: #64748b;
     cursor: pointer;
-    transition:
-        transform 0.12s ease,
-        box-shadow 0.12s ease,
-        background 0.12s ease,
-        border-color 0.12s ease;
+    transition: background 0.15s, color 0.15s;
 }
 
-.export-action-button:hover {
-    transform: translateY(-1px);
-    background: #285fd0;
-    border-color: #285fd0;
-    box-shadow: 0 6px 16px rgba(31, 58, 95, 0.12);
+.forecast-granularity label:hover {
+    color: #1e293b;
 }
 
-.export-message {
-    width: 100%;
+.forecast-granularity input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+    margin: 0;
+}
+
+.forecast-granularity label:has(input:checked) {
+    background: white;
+    color: #2563eb;
+    font-weight: 600;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+}
+
+/* Linha do caminho: Voltar + «Todos os meses › Novembro de 2025» + dica */
+
+.forecast-path-row {
     margin-top: 14px;
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    background: #f8fafc;
+    border: 1px solid #eef2f7;
+    border-radius: 10px;
+    min-height: 40px;
 }
 
-.export-message:empty {
+.forecast-back-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 12px;
+    border: 1px solid #bfdbfe;
+    border-radius: 7px;
+    background: #eff6ff;
+    color: #1d4ed8;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.forecast-back-button:hover {
+    background: #dbeafe;
+}
+
+.forecast-path {
+    color: #0f172a;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.forecast-hint {
+    margin-left: auto;
+    color: #94a3b8;
+    font-size: 12px;
+}
+
+/* Resumo do período escolhido */
+
+.forecast-detail {
+    margin-top: 6px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 12px;
+}
+
+.forecast-detail:empty {
     display: none;
 }
 
-.export-message .sale-success-message,
-.export-message .sale-error-message {
+.forecast-detail-item {
     padding: 12px 14px;
-    border-radius: 8px;
-}
-
-._dash-loading {
-    color: #2f6fed;
-}
-
-@media (max-width: 1050px) {
-    .export-actions-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .export-action-card {
-        min-height: auto;
-    }
-}
-
-/* Período do relatório */
-
-.export-period-panel {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 18px;
-    margin-bottom: 18px;
-    padding: 18px 22px;
-    background: #ffffff;
-    border: 1px solid #d8e0ea;
-    border-radius: 12px;
+    flex-direction: column;
+    gap: 4px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-left: 3px solid #2563eb;
+    border-radius: 8px;
+    min-width: 0;
 }
 
-.export-period-panel h3 {
-    margin: 0 0 6px 0;
-    color: #172033;
-    font-size: 17px;
+.forecast-detail-item.forecast-detail-prevista {
+    border-left-color: #14b8a6;
 }
 
-.export-period-panel p {
-    margin: 0;
-    color: #607089;
-    font-size: 13px;
-    line-height: 1.5;
+.forecast-detail-item.forecast-detail-livro {
+    grid-column: 1 / -1;
+    border-left-color: #f59e0b;
 }
 
-.export-period-panel .dash-datepicker {
-    flex-shrink: 0;
-    min-width: 260px;
+.forecast-detail-item span {
+    color: #64748b;
+    font-size: 12px;
 }
 
-@media (max-width: 900px) {
-    .export-period-panel {
-        flex-direction: column;
-        align-items: stretch;
+.forecast-detail-item strong {
+    color: #0f172a;
+    font-size: 15px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+@media (max-width: 700px) {
+    .forecast-hint {
+        margin-left: 0;
+        width: 100%;
     }
 }
