@@ -9,7 +9,6 @@ def transformar_dim_cliente(clientes):
         [
             "id",
             "nome_completo",
-            "data_registo",
         ]
     ].copy()
 
@@ -168,8 +167,6 @@ def transformar_dim_autor(autores):
         [
             "id",
             "nome",
-            "nacionalidade",
-            "data_nascimento",
         ]
     ].copy()
 
@@ -188,7 +185,6 @@ def transformar_dim_genero(generos):
         [
             "id",
             "nome",
-            "descricao",
         ]
     ].copy()
 

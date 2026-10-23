@@ -171,7 +171,6 @@ def carregar_dim_cliente(conn, dim_cliente):
             {
                 "cliente_id_origem": None,
                 "nome_completo": "Cliente não identificado",
-                "data_registo": None,
             }
         ]
     )
@@ -192,8 +191,6 @@ def carregar_dim_autor(conn, dim_autor):
                 "autor_key": 0,
                 "autor_id_origem": 0,
                 "nome": "Sem autor",
-                "nacionalidade": None,
-                "data_nascimento": None,
             }
         ]
     )
@@ -210,7 +207,6 @@ def carregar_dim_genero(conn, dim_genero):
                 "genero_key": 0,
                 "genero_id_origem": 0,
                 "nome": "Sem género",
-                "descricao": None,
             }
         ]
     )
