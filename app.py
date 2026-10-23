@@ -3689,6 +3689,67 @@ def criar_interpretacao_stock(
     def unidades(tabela):
         return int(tabela["quantidade_recomendada"].fillna(0).sum()) if not tabela.empty else 0
 
+    def quantidade_texto(valor):
+        """«4,7» ou «6» (sem casas decimais quando o valor é inteiro)."""
+        valor = float(valor or 0)
+        if abs(valor - round(valor)) < 0.05:
+            return str(int(round(valor)))
+        return formatar_numero_simples(valor, 1)
+
+    def frase_livro(linha):
+        """Texto curto, como no relatório, sobre a procura e o stock de um livro."""
+        media = float(linha.get("media_mensal_vendas") or 0)
+        stock = int(linha["stock_disponivel"]) if pd.notna(linha.get("stock_disponivel")) else 0
+        cobertura = linha.get("meses_cobertura")
+        sugestao = linha.get("sugestao_stock")
+        # Unidades que faltam para cobrir 3 meses de vendas.
+        para_tres_meses = max(int(-(-(media * 3 - stock) // 1)), 0)
+
+        texto = (
+            f"Vende em média {quantidade_texto(media)} livro(s) por mês e tem "
+            f"{stock} em stock, o que dá para cerca de {texto_cobertura(cobertura)}."
+        )
+
+        if sugestao == "Repor urgente":
+            repor = int(linha.get("quantidade_recomendada") or 0) or para_tres_meses
+            texto += f" O stock está quase a acabar: sugere-se repor já {repor} unidade(s)."
+        elif sugestao == "Aumentar stock":
+            texto += (
+                f" Sugere-se aumentar o stock em {para_tres_meses} unidade(s) "
+                "para cobrir 3 meses de vendas."
+            )
+        elif sugestao == "Reforço preventivo":
+            texto += (
+                f" Ainda chega, mas convém planear um reforço de {para_tres_meses} "
+                "unidade(s) nas próximas semanas."
+            )
+        elif pd.notna(cobertura) and float(cobertura) >= 12:
+            texto += " O stock dá para mais de um ano: não é preciso encomendar."
+        else:
+            texto += " O stock é suficiente: não é preciso encomendar por agora."
+
+        return texto
+
+    def introducao_lista(tabela, vazio, nome_estado):
+        """Parágrafo no topo de «Repor agora» / «Acompanhar»."""
+        if tabela.empty:
+            return vazio
+
+        primeiro = tabela.sort_values(
+            by=["meses_cobertura", "titulo"],
+            na_position="last",
+        ).iloc[0]
+
+        media = float(primeiro.get("media_mensal_vendas") or 0)
+        stock = int(primeiro["stock_disponivel"]) if pd.notna(primeiro["stock_disponivel"]) else 0
+        repor = int(primeiro["quantidade_recomendada"]) if pd.notna(primeiro["quantidade_recomendada"]) else 0
+
+        return (
+            f"{len(tabela)} livro(s) {nome_estado}. O mais urgente é {primeiro['titulo']}: "
+            f"vende cerca de {quantidade_texto(media)} por mês e tem {stock} em stock. "
+            f"Sugere-se repor {repor} unidade(s)."
+        )
+
     segmentos = [
         ("Crítico", len(criticos), "danger"),
         ("Atenção", len(atencao), "warning"),
@@ -3712,14 +3773,20 @@ def criar_interpretacao_stock(
     if melhor_reforco is not None:
         conclusoes.append(
             f"Vale a pena reforçar {melhor_reforco['titulo']}: vende "
-            f"{formatar_numero_simples(melhor_reforco['media_mensal_vendas'])} por mês e o stock "
+            f"{quantidade_texto(melhor_reforco['media_mensal_vendas'])} por mês e o stock "
             f"só dá para {texto_cobertura(melhor_reforco['meses_cobertura'])}."
         )
 
-    if livro_maior_procura is not None:
+    mesmo_livro = (
+        melhor_reforco is not None
+        and livro_maior_procura is not None
+        and melhor_reforco["titulo"] == livro_maior_procura["titulo"]
+    )
+
+    if livro_maior_procura is not None and not mesmo_livro:
         conclusoes.append(
             f"{livro_maior_procura['titulo']} é o livro mais procurado "
-            f"({formatar_numero_simples(livro_maior_procura['media_mensal_vendas'])} por mês)"
+            f"({quantidade_texto(livro_maior_procura['media_mensal_vendas'])} por mês)"
             + (
                 " e tem stock suficiente."
                 if classificar_oportunidade_stock(livro_maior_procura)[0] == "Stock suficiente"
@@ -3811,8 +3878,12 @@ def criar_interpretacao_stock(
                                 ],
                             ),
                             html.P(
-                                "Stock a acabar: dá para menos de 1 mês de vendas.",
-                                className="interp-muted",
+                                introducao_lista(
+                                    criticos,
+                                    "Nenhum livro está com o stock a acabar.",
+                                    "têm stock para menos de 1 mês de vendas",
+                                ),
+                                className="interp-intro",
                             ),
                             lista_livros(
                                 criticos,
@@ -3835,8 +3906,12 @@ def criar_interpretacao_stock(
                                 ],
                             ),
                             html.P(
-                                "Ainda há stock, mas está perto do limite.",
-                                className="interp-muted",
+                                introducao_lista(
+                                    atencao,
+                                    "Nenhum livro está perto do limite.",
+                                    "ainda têm stock, mas estão perto do limite",
+                                ),
+                                className="interp-intro",
                             ),
                             lista_livros(
                                 atencao,
@@ -3909,6 +3984,24 @@ def criar_interpretacao_stock(
                                 ),
                             ],
                         ),
+                    ),
+                    html.Div(
+                        className="interp-notes",
+                        children=[
+                            html.Div(
+                                className=f"interp-note {linha['classe_sugestao_stock']}",
+                                children=[
+                                    html.Strong(
+                                        ("Livro mais vendido: " if posicao == 0 else "")
+                                        + linha["titulo"]
+                                    ),
+                                    html.P(frase_livro(linha)),
+                                ],
+                            )
+                            for posicao, (_, linha) in enumerate(
+                                top_procura.head(3).iterrows()
+                            )
+                        ],
                     ),
                 ],
             ),
