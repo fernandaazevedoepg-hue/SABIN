@@ -3711,7 +3711,13 @@ def criar_interpretacao_stock(
         )
 
         if sugestao == "Repor urgente":
-            repor = int(linha.get("quantidade_recomendada") or 0) or para_tres_meses
+            # Usa a mesma quantidade da lista «Repor agora» (tabela de alertas).
+            recomendada = dados.loc[
+                dados["titulo"] == linha["titulo"],
+                "quantidade_recomendada",
+            ].fillna(0)
+            repor = int(recomendada.iloc[0]) if not recomendada.empty else 0
+            repor = repor or para_tres_meses
             texto += f" O stock está quase a acabar: sugere-se repor já {repor} unidade(s)."
         elif sugestao == "Aumentar stock":
             texto += (

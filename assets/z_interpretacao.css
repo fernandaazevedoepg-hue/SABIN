@@ -1,3 +1,5 @@
+/* Interpretação do Stock: 4 blocos (estado, repor/acompanhar, mais procurados, resumo). */
+
 .interp-page {
     display: flex;
     flex-direction: column;
