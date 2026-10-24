@@ -3,7 +3,6 @@ from pathlib import Path
 import os
 
 import pandas as pd
-from dotenv import load_dotenv
 from sqlalchemy import text
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -23,15 +22,12 @@ from analysis.dw_consultas import (
     carregar_previsao_receita as carregar_previsao_receita_dw,
 )
 
-load_dotenv()
+from services.base_dados import engine
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 EXPORTS_DIR = BASE_DIR / "exports"
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    raise ValueError("DATABASE_URL não encontrada no ficheiro .env")
 
-from services.base_dados import engine
 
 AZUL_ESCURO = "1F3A5F"
 AZUL_CLARO = "EAF1FF"

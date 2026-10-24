@@ -2,7 +2,6 @@ import os
 
 import pandas as pd
 
-from dotenv import load_dotenv
 from sqlalchemy import text
 
 from analysis.dw_consultas import (
@@ -12,18 +11,6 @@ from analysis.dw_consultas import (
     data_key,
     verificar_datas,
 )
-
-
-load_dotenv()
-
-DATABASE_URL = os.getenv("DATABASE_URL")
-
-if not DATABASE_URL:
-    raise ValueError(
-        "DATABASE_URL não encontrada "
-        "no ficheiro .env"
-    )
-
 
 from services.base_dados import engine
 

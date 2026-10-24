@@ -23,9 +23,9 @@ O SABIN reúne funcionalidades operacionais e analíticas, nomeadamente:
 - **Gestão do catálogo:** catálogo completo com pesquisa por título, autor ou ISBN e filtro por género; janelas para editar um livro, repor stock, alterar o preço e adicionar livros novos. Ao adicionar, a pesquisa por ISBN preenche os dados do livro e sugere o PVP.
 - **Gestão de clientes:** registo de clientes novos durante a venda.
 - **Gestão de vendas:** registo de vendas com carrinho e escolha do método de pagamento.
-- **Gestão de reservas:** criação e cancelamento de reservas; as reservas pendentes expiram automaticamente depois da data limite.
+- **Gestão de reservas:** criação, cancelamento e conclusão de reservas. Ao concluir (quando o cliente levanta o livro), a venda é registada com o método de pagamento escolhido. As reservas pendentes expiram automaticamente depois da data limite.
 - **Gestão de stock:** histórico dos movimentos de stock e das alterações de preço.
-- **Processos ETL:** extração, transformação e carregamento dos dados para o Data Warehouse. O ETL corre automaticamente em segundo plano depois de cada operação na aplicação (venda, reserva, reposição, alteração de preço ou livro novo); não há botão para o executar.
+- **Processos ETL:** extração, transformação e carregamento dos dados para o Data Warehouse. O ETL corre automaticamente em segundo plano depois de cada operação na aplicação (venda, reserva, reposição, alteração de preço ou livro novo); não há botão para o executar. Também pode ser executado manualmente (secção 6.6).
 - **Data Warehouse:** organização da informação num modelo dimensional.
 - **Indicadores e gráficos:** análise dos dados do negócio através de métricas e visualizações.
 - **Previsão da receita:** modelo de aprendizagem automática, com gráfico por mês, trimestre ou ano e *drill* (clicar num ponto para descer até aos meses e aos dias).
@@ -49,6 +49,10 @@ O SABIN reúne funcionalidades operacionais e analíticas, nomeadamente:
 | Microsoft Power BI | Construção de dashboards e análise visual. |
 | Render | Alojamento da aplicação Web. |
 | Gunicorn | Execução da aplicação no ambiente de produção. |
+| Flask | Servidor usado pelo Dash; sessões do login. |
+| openpyxl e ReportLab | Criação dos relatórios em Excel e em PDF. |
+| python-dotenv | Leitura das variáveis do ficheiro `.env`. |
+| Google Books, Open Library e pesquisa web (requests, ddgs) | Pesquisa dos dados de um livro pelo ISBN. |
 
 ## 5. Organização do repositório
 
@@ -59,10 +63,10 @@ O código está organizado em diretórios, de acordo com as responsabilidades do
 - `etl/` — componentes relacionados com os processos de extração, transformação e carregamento de dados.
 - `analysis/` — componentes de análise, previsão e geração de alertas.
 - `database/relational/` — scripts SQL relacionados com a estrutura da base de dados operacional, restrições, triggers e dados de teste.
-- `database/dimensional/` — scripts de criação do modelo dimensional do Data Warehouse.
+- `database/dimensional/` — script de criação do modelo dimensional do Data Warehouse (esquema `dw`).
 - `database/migrations/` — scripts de alterações à estrutura da base de dados.
 - `database/validation/` — consultas SQL utilizadas na validação dos dados e das estruturas.
-- `assets/` — ficheiros CSS e JavaScript utilizados pela interface.
+- `assets/` — ficheiros CSS utilizados pela interface.
 - `certificados/` — certificado público do Supabase para o Power BI Desktop (secção 9.1).
 - `outputs/` e `exports/` — ficheiros gerados pela aplicação (CSV das análises, Excel e PDF exportados). São criados automaticamente e não fazem parte do repositório.
 - `tests/` — testes unitários automáticos (TU01–TU15).
@@ -136,14 +140,11 @@ A configuração existente inclui as seguintes variáveis:
 
 | Variável | Finalidade |
 |---|---|
-| `PGHOST` | Endereço do servidor PostgreSQL. |
-| `PGPORT` | Porta de ligação ao servidor. |
-| `PGDATABASE` | Nome da base de dados. |
-| `PGUSER` | Utilizador da base de dados. |
-| `PGPASSWORD` | Palavra-passe do utilizador. |
-| `DATABASE_URL` | URL completa utilizada pela aplicação para estabelecer a ligação à base de dados. |
+| `DATABASE_URL` | URL completa utilizada pela aplicação para estabelecer a ligação à base de dados. É a única variável obrigatória. |
+| `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD` | Os mesmos dados de ligação, separados. Não são usados pelo código Python; servem para ligar à base de dados noutras ferramentas (por exemplo, `psql` ou o Power BI). |
 | `DW_SCHEMA` | Opcional. Esquema do Data Warehouse usado pelo ETL, pelas análises e pela aplicação (por omissão, `dw`). Permite testar num esquema separado, por exemplo `dw_teste`. |
 | `SABIN_DATA_REFERENCIA` | Opcional, só para testes. Data (AAAA-MM-DD) usada como «hoje» na análise de stock e na previsão. |
+| `POWER_BI_FILE` | Opcional. Caminho de outro ficheiro `.pbix` para o botão Power BI da página Exportações (por omissão, `powerbi/sabin.pbix`). |
 
 O ficheiro `.env` deve estar na pasta principal do projeto, ao mesmo nível de `app.py`.
 
@@ -153,13 +154,28 @@ Se esta variável não estiver definida, a aplicação não consegue iniciar.
 
 ### 6.6. Preparar a base de dados
 
-A aplicação necessita de uma base de dados PostgreSQL acessível e com a estrutura esperada pelo código.
+A aplicação necessita de uma base de dados PostgreSQL acessível e com a estrutura esperada pelo código. A base de dados do Supabase indicada no `.env` já está preparada; os passos abaixo só são necessários para criar uma base de dados nova.
 
-Os scripts SQL encontram-se organizados no diretório `database/`. A estrutura relacional, o modelo dimensional, as migrações e as consultas de validação devem ser consultados de acordo com a finalidade de cada script.
+Executar os scripts de `database/` por esta ordem (por exemplo, no SQL Editor do Supabase ou com `psql`):
 
-Antes de executar scripts de criação ou de inserção de dados, deve confirmar-se a sua finalidade e o ambiente de destino.
+1. `database/relational/01_schema.sql` — tabelas da base operacional.
+2. `database/relational/02_constraints.sql` — restrições.
+3. `database/relational/03_triggers.sql` — funções e *triggers* (stock, reservas, totais dos clientes).
+4. `database/relational/04_dados_teste.sql` — dados de exemplo (opcional).
+5. `database/migrations/01_gestao_catalogo.sql` — histórico de stock e de preços.
+6. `database/dimensional/01_data_warehouse.sql` — tabelas do Data Warehouse (esquema `dw`), vazias.
 
-O Data Warehouse segue o modelo dimensional definido pelo professor (`Def_Schema_SABIN.sql`): seis dimensões de negócio (`dim_data`, `dim_cliente`, `dim_livro`, `dim_autor`, `dim_genero`, `dim_pagamento`), três dimensões de apoio (`dim_nivel_stock`, `dim_modelo_previsao`, `dim_alerta_previsao`) e quatro factos (`fact_vendas`, `fact_stock`, `fact_previsao`, `fact_alerta_previsao`). A `fact_vendas` tem o grão item de venda × autor × género, e o valor de cada item é repartido pelo `peso`. O ficheiro `database/dimensional/01_data_warehouse.sql` descreve o modelo anterior, com tabelas *bridge*, e já não é usado.
+Depois, carregar o Data Warehouse executando o ETL na pasta do projeto:
+
+```bash
+python -m services.etl_service
+```
+
+Numa base de dados nova, a primeira linha mostra «[ERRO] Alertas de stock: Datas sem correspondência na dim_data». É normal: o calendário só é criado pela carga, e os alertas de stock voltam a ser calculados logo a seguir, com «[OK] Alertas de stock». A partir daí, a aplicação executa o ETL sozinha depois de cada operação.
+
+Para confirmar que o Data Warehouse está coerente com a base operacional, podem executar-se as consultas de `database/validation/queries_validacao.sql`: as vendas, a receita e as unidades devem ser iguais nos dois lados, e as consultas de pesos e de duplicados não devem devolver linhas.
+
+O Data Warehouse segue o modelo dimensional definido pelo professor (`database/dimensional/01_data_warehouse.sql`): seis dimensões de negócio (`dim_data`, `dim_cliente`, `dim_livro`, `dim_autor`, `dim_genero`, `dim_pagamento`), três dimensões de apoio (`dim_nivel_stock`, `dim_modelo_previsao`, `dim_alerta_previsao`) e quatro factos (`fact_vendas`, `fact_stock`, `fact_previsao`, `fact_alerta_previsao`). A `fact_vendas` tem o grão item de venda × autor × género, e o valor de cada item é repartido pelo `peso`.
 
 O ETL (`etl/load.py`) limpa e volta a carregar as dimensões de negócio e a `fact_vendas` numa única transação. Mantém o calendário e as fotografias de stock dos dias anteriores, e no fim compara o resultado com a base operacional. Se algum valor não coincidir, a carga é anulada.
 
@@ -196,8 +212,9 @@ A versão online do SABIN utiliza o Render para alojar a aplicação Web e o Sup
 A configuração do ambiente online utiliza as seguintes variáveis:
 
 - `DATABASE_URL` — URL de ligação à base de dados.
-- `SABIN_ONLINE` — variável que identifica o modo de funcionamento online.
+- `SABIN_ONLINE` — identifica a versão online: o cookie da sessão só é enviado por HTTPS e não se tenta instalar o certificado do Supabase (secção 9.1).
 - `SABIN_UTILIZADOR` e `SABIN_PALAVRA_PASSE` — conta única de acesso à aplicação (ver secção 7.1).
+- `SABIN_SESSION_SECRET` — opcional. Chave usada para assinar as sessões; se não existir, é derivada da conta.
 
 ### 7.1. Acesso com login
 

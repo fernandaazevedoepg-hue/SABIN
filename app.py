@@ -19,7 +19,6 @@ from dash import (
     no_update,
 )
 
-from dotenv import load_dotenv
 from sqlalchemy import text
 
 from analysis.dw_consultas import (
@@ -68,20 +67,8 @@ from services.catalog_service import (
     obter_livro_gestao,
     repor_stock,
 )
-
-
-load_dotenv()
-
-DATABASE_URL = os.getenv("DATABASE_URL")
-
-if not DATABASE_URL:
-    raise ValueError(
-        "DATABASE_URL não encontrada no ficheiro .env"
-    )
-
-
-from services.base_dados import engine
 from services.autenticacao import ativar_autenticacao, login_ativo
+from services.base_dados import engine
 
 
 # Formatação
@@ -3472,7 +3459,6 @@ def criar_tabela_stock_completo(dados):
             )
         ],
     )
-
 
 
 def formatar_numero_simples(

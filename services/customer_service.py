@@ -1,19 +1,6 @@
-import os
 import re
 
-from dotenv import load_dotenv
 from sqlalchemy import text
-
-
-load_dotenv()
-
-DATABASE_URL = os.getenv("DATABASE_URL")
-
-if not DATABASE_URL:
-    raise ValueError(
-        "DATABASE_URL não encontrada no ficheiro .env"
-    )
-
 
 from services.base_dados import engine
 

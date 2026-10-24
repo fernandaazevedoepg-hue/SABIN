@@ -1,5 +1,4 @@
 import json
-import os
 import re
 import unicodedata
 from datetime import date
@@ -9,20 +8,12 @@ from urllib.parse import urlparse
 
 import requests
 from ddgs import DDGS
-from dotenv import load_dotenv
 from requests.adapters import HTTPAdapter
 from sqlalchemy import text
 from urllib3.util.retry import Retry
 
-
-load_dotenv()
-
-DATABASE_URL = os.getenv("DATABASE_URL")
-
-if not DATABASE_URL:
-    raise ValueError("DATABASE_URL não encontrada no ficheiro .env")
-
 from services.base_dados import engine
+
 
 GOOGLE_BOOKS_URL = "https://www.googleapis.com/books/v1/volumes"
 OPEN_LIBRARY_BOOKS_URL = "https://openlibrary.org/api/books"
@@ -981,7 +972,6 @@ def _procurar_open_library_legado(isbn):
         "data_publicacao": normalizar_data(data_publicacao),
         "generos": mapear_generos(assuntos),
     }
-
 
 
 def procurar_open_library(isbn):
