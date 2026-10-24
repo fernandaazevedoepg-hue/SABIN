@@ -1,8 +1,6 @@
 from datetime import datetime
 from pathlib import Path
 import os
-import subprocess
-import sys
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -17,7 +15,7 @@ from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
-from reportlab.platypus import KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from analysis.dw_consultas import (
     SQL_STOCK_ATUAL,
@@ -1040,28 +1038,3 @@ def encontrar_ficheiro_power_bi():
         )
     return sorted(candidatos, key=lambda item: item.name.lower())[0]
 
-
-def abrir_power_bi():
-    """Abre o ficheiro Power BI quando existe uma localização válida."""
-    caminho = encontrar_ficheiro_power_bi()
-    if sys.platform.startswith("win"):
-        os.startfile(str(caminho))
-        try:
-            from services.powerbi_refresh_service import iniciar_atualizacao_automatica
-
-            iniciar_atualizacao_automatica(
-                caminho_relatorio=caminho,
-                aguardar_modelo=True,
-                motivo="Botão Abrir Power BI do SABIN",
-            )
-        except Exception as erro:
-            print(
-                "[SABIN-PowerBI] Não foi possível agendar a atualização automática:",
-                erro,
-                flush=True,
-            )
-    elif sys.platform == "darwin":
-        subprocess.Popen(["open", str(caminho)])
-    else:
-        subprocess.Popen(["xdg-open", str(caminho)])
-    return caminho

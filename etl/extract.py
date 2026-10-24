@@ -71,8 +71,6 @@ def main():
 
     vendas = dados["vendas"]
     itens_venda = dados["itens_venda"]
-    livros = dados["livros"]
-    clientes = dados["clientes"]
 
 
     print("\nPrimeiras vendas:")

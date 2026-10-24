@@ -79,32 +79,6 @@ def carregar_livros_gestao():
     return livros
 
 
-def carregar_autores_gestao():
-    """Carrega os autores disponíveis para a gestão do catálogo."""
-    query = text("""
-        SELECT
-            id,
-            nome
-        FROM public.autores
-        ORDER BY nome;
-    """)
-
-    with engine.connect() as connection:
-        resultados = (
-            connection.execute(query)
-            .mappings()
-            .all()
-        )
-
-    return [
-        {
-            "id": int(resultado["id"]),
-            "nome": resultado["nome"],
-        }
-        for resultado in resultados
-    ]
-
-
 def carregar_generos_gestao():
     """Carrega os géneros disponíveis para o catálogo."""
     query = text("""

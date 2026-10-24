@@ -20,18 +20,19 @@ O serviço de alojamento utiliza um plano gratuito, pelo que poderá demorar alg
 
 O SABIN reúne funcionalidades operacionais e analíticas, nomeadamente:
 
-- **Gestão do catálogo:** consulta e gestão de livros, autores, géneros e preços.
-- **Gestão de clientes:** registo e consulta de clientes.
-- **Gestão de vendas:** registo de vendas, seleção dos métodos de pagamento e tratamento dos dados associados.
-- **Gestão de reservas:** criação e acompanhamento de reservas.
-- **Gestão de stock:** consulta de movimentos e registo de reposições.
-- **Processos ETL:** extração, transformação e carregamento de dados para análise.
+- **Gestão do catálogo:** catálogo completo com pesquisa por título, autor ou ISBN e filtro por género; janelas para editar um livro, repor stock, alterar o preço e adicionar livros novos. Ao adicionar, a pesquisa por ISBN preenche os dados do livro e sugere o PVP.
+- **Gestão de clientes:** registo de clientes novos durante a venda.
+- **Gestão de vendas:** registo de vendas com carrinho e escolha do método de pagamento.
+- **Gestão de reservas:** criação e cancelamento de reservas; as reservas pendentes expiram automaticamente depois da data limite.
+- **Gestão de stock:** histórico dos movimentos de stock e das alterações de preço.
+- **Processos ETL:** extração, transformação e carregamento dos dados para o Data Warehouse. O ETL corre automaticamente em segundo plano depois de cada operação na aplicação (venda, reserva, reposição, alteração de preço ou livro novo); não há botão para o executar.
 - **Data Warehouse:** organização da informação num modelo dimensional.
 - **Indicadores e gráficos:** análise dos dados do negócio através de métricas e visualizações.
-- **Previsão da receita:** utilização de um modelo de aprendizagem automática para apoiar a análise dos resultados.
-- **Alertas:** identificação de situações relevantes relacionadas com o stock e as previsões.
-- **Exportação de dados:** geração de ficheiros Excel e PDF.
-- **Power BI:** exploração da informação através de dashboards e relatórios analíticos.
+- **Previsão da receita:** modelo de aprendizagem automática, com gráfico por mês, trimestre ou ano e *drill* (clicar num ponto para descer até aos meses e aos dias).
+- **Alertas e interpretação do stock:** níveis de stock (Crítico, Atenção, Normal), livros a repor, livros mais procurados e textos curtos com sugestões.
+- **Exportação de dados:** ficheiros Excel e PDF de um período escolhido.
+- **Acesso com login:** conta única na versão online (secção 7.1).
+- **Power BI:** dashboards ligados ao Data Warehouse em DirectQuery (secção 9).
 
 ## 4. Tecnologias utilizadas
 
@@ -62,7 +63,8 @@ O código está organizado em diretórios, de acordo com as responsabilidades do
 - `database/migrations/` — scripts de alterações à estrutura da base de dados.
 - `database/validation/` — consultas SQL utilizadas na validação dos dados e das estruturas.
 - `assets/` — ficheiros CSS e JavaScript utilizados pela interface.
-- `outputs/` — ficheiros CSV produzidos por determinados processos analíticos.
+- `certificados/` — certificado público do Supabase para o Power BI Desktop (secção 9.1).
+- `outputs/` e `exports/` — ficheiros gerados pela aplicação (CSV das análises, Excel e PDF exportados). São criados automaticamente e não fazem parte do repositório.
 - `tests/` — testes unitários automáticos (TU01–TU15).
 - `powerbi/` — ficheiro do relatório Power BI.
 - `requirements.txt` — lista de dependências Python necessárias ao projeto.
@@ -74,7 +76,7 @@ O código está organizado em diretórios, de acordo com as responsabilidades do
 
 Para executar o projeto localmente, são necessários:
 
-- Python instalado.
+- Python 3.13 (a versão usada no desenvolvimento e no Render, definida no ficheiro `.python-version`). As bibliotecas do `requirements.txt` também têm instalação para Python 3.11, 3.12 e 3.14. No Python 3.10 ou anterior e no 3.15 a instalação falha (o pandas 3 exige pelo menos o 3.11 e ainda não há versão do pandas e do psycopg2 para o 3.15).
 - Git instalado para clonar o repositório.
 - Acesso a uma base de dados PostgreSQL compatível com a estrutura do SABIN.
 - Um editor de código, como o Visual Studio Code.
@@ -124,7 +126,7 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-O ficheiro `requirements.txt` contém as bibliotecas utilizadas pela aplicação, incluindo dependências específicas do Windows.
+O ficheiro `requirements.txt` contém as bibliotecas utilizadas pela aplicação.
 
 ### 6.5. Configurar a ligação à base de dados
 
@@ -157,7 +159,7 @@ Os scripts SQL encontram-se organizados no diretório `database/`. A estrutura r
 
 Antes de executar scripts de criação ou de inserção de dados, deve confirmar-se a sua finalidade e o ambiente de destino.
 
-O Data Warehouse segue o modelo dimensional definido pelo professor orientador (`Def_Schema_SABIN.sql`): seis dimensões de negócio (`dim_data`, `dim_cliente`, `dim_livro`, `dim_autor`, `dim_genero`, `dim_pagamento`), três dimensões de apoio (`dim_nivel_stock`, `dim_modelo_previsao`, `dim_alerta_previsao`) e quatro factos (`fact_vendas`, `fact_stock`, `fact_previsao`, `fact_alerta_previsao`). A `fact_vendas` tem o grão item de venda × autor × género, e o valor de cada item é repartido pelo `peso`. O ficheiro `database/dimensional/01_data_warehouse.sql` descreve o modelo anterior, com tabelas *bridge*, e já não é usado.
+O Data Warehouse segue o modelo dimensional definido pelo professor (`Def_Schema_SABIN.sql`): seis dimensões de negócio (`dim_data`, `dim_cliente`, `dim_livro`, `dim_autor`, `dim_genero`, `dim_pagamento`), três dimensões de apoio (`dim_nivel_stock`, `dim_modelo_previsao`, `dim_alerta_previsao`) e quatro factos (`fact_vendas`, `fact_stock`, `fact_previsao`, `fact_alerta_previsao`). A `fact_vendas` tem o grão item de venda × autor × género, e o valor de cada item é repartido pelo `peso`. O ficheiro `database/dimensional/01_data_warehouse.sql` descreve o modelo anterior, com tabelas *bridge*, e já não é usado.
 
 O ETL (`etl/load.py`) limpa e volta a carregar as dimensões de negócio e a `fact_vendas` numa única transação. Mantém o calendário e as fotografias de stock dos dias anteriores, e no fim compara o resultado com a base operacional. Se algum valor não coincidir, a carga é anulada.
 
@@ -211,7 +213,7 @@ python app.py
 
 O botão «Terminar sessão» fica no fundo do menu lateral. A sessão dura no máximo 12 horas.
 
-A aplicação é executada em produção através do Gunicorn. O comando de arranque configurado no serviço de alojamento deve corresponder ao objeto de aplicação definido no código.
+A aplicação é executada em produção através do Gunicorn, com o comando de arranque `gunicorn app:server` (o objeto `server` é definido em `app.py`).
 
 O endereço público da aplicação é:
 
@@ -231,9 +233,12 @@ A exposição pública pode permitir que terceiros utilizem as credenciais para 
 
 O projeto inclui o relatório Power BI no diretório `powerbi/`.
 
-O ficheiro pode ser aberto através do Microsoft Power BI Desktop, desde que esteja disponível localmente e exista uma configuração de acesso válida à fonte de dados.
+O ficheiro `sabin.pbix` abre-se no Microsoft Power BI Desktop. Liga-se ao Data Warehouse no Supabase em modo **DirectQuery**: as tabelas não são copiadas para o ficheiro, e cada visual consulta a base de dados. Só a tabela das medidas (`_Medidas`) está em modo de importação.
 
-O relatório permite explorar os dados através de dashboards e visualizações analíticas. O comportamento da ligação e a atualização dos dados dependem da configuração da fonte de dados e do ambiente de execução utilizado.
+As páginas atualizam-se automaticamente de 1 em 1 minuto. Assim, depois de uma operação na aplicação e de o ETL terminar, os dados novos aparecem no relatório sem ser preciso carregar em Atualizar.
+
+Na página **Exportações** da aplicação, o botão Power BI descarrega o ficheiro `sabin.pbix`.
+
 ### 9.1. Certificado do Supabase (Power BI noutro computador)
 
 O Power BI Desktop liga-se ao Supabase com encriptação e, no Windows, só aceita essa ligação se o certificado raiz do Supabase estiver instalado no computador. Sem ele, ao abrir o `sabin.pbix` noutro computador aparece um erro de certificado.

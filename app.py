@@ -1,13 +1,10 @@
 import os
 import re
 import unicodedata
-import hmac
 from datetime import date, timedelta
 
 import pandas as pd
 import plotly.graph_objects as go
-
-from flask import Response
 
 from dash import (
     Dash,
@@ -50,6 +47,7 @@ from services.customer_service import adicionar_cliente
 from services.reservation_service import (
     atualizar_status_reserva,
     carregar_clientes_reserva,
+    concluir_reserva_com_venda,
     carregar_livros_reserva,
     carregar_reservas,
     criar_reserva,
@@ -63,7 +61,6 @@ from services.catalog_service import (
     adicionar_livro,
     atualizar_livro,
     alterar_preco,
-    carregar_autores_gestao,
     carregar_generos_gestao,
     carregar_livros_gestao,
     consultar_historico_precos,
@@ -136,6 +133,7 @@ def formatar_mes(valor):
 # Visão Geral
 
 def _contar_vendas_operacionais():
+    """Conta as vendas concluídas na base operacional."""
     query = text("""
         SELECT COUNT(*) AS total
         FROM public.vendas
@@ -158,6 +156,7 @@ def _contar_vendas_operacionais():
 
 
 def _contar_vendas_dw():
+    """Conta as vendas que já estão no data warehouse."""
     query = text(f"""
         SELECT COUNT(DISTINCT venda_id_origem) AS total
         FROM {DW_SCHEMA}.fact_vendas;
@@ -179,6 +178,7 @@ def _contar_vendas_dw():
 
 
 def _usar_dados_operacionais_visao_geral():
+    """Indica se a Visão Geral deve usar a base operacional, por o DW ainda não ter as vendas mais recentes."""
     vendas_operacionais = (
         _contar_vendas_operacionais()
     )
@@ -417,10 +417,12 @@ def filtrar_catalogo(dados, pesquisa, genero):
 
 
 def texto_contagem_livros(quantidade):
+    """Devolve o texto «N livro(s) encontrado(s)» com singular ou plural."""
     return f"{quantidade} {'livro encontrado' if quantidade == 1 else 'livros encontrados'}"
 
 
 def carregar_generos():
+    """Carrega os nomes dos géneros, por ordem alfabética."""
     query = text("""
         SELECT nome
         FROM public.generos
@@ -1193,6 +1195,7 @@ def criar_tabela_catalogo(dados, com_acoes=False):
 
 
 def criar_tabela_alertas(dados):
+    """Cria a tabela de alertas de stock com a cor de cada nível."""
     linhas = []
 
     for _, alerta in dados.iterrows():
@@ -1265,6 +1268,7 @@ def criar_tabela_alertas(dados):
 
 
 def criar_tabela_stock(dados):
+    """Cria a tabela com os livros em nível Crítico ou Atenção."""
     alertas = dados[
         dados["nivel"].isin(
             [
@@ -1346,6 +1350,7 @@ def criar_tabela_stock(dados):
 
 
 def criar_tabela_carrinho(carrinho):
+    """Cria a tabela com os livros adicionados à venda."""
     if not carrinho:
         return html.Div(
             "Ainda não adicionaste livros à venda.",
@@ -1402,6 +1407,7 @@ def criar_tabela_carrinho(carrinho):
 # Sidebar
 
 def criar_sidebar():
+    """Constrói o menu lateral da aplicação."""
     return html.Div(
         className="sidebar",
         children=[
@@ -1926,6 +1932,7 @@ def pagina_visao_geral():
 # Página Registar Venda
 
 def criar_opcoes_clientes_venda():
+    """Cria as opções de cliente da venda, incluindo venda ao balcão e novo cliente."""
     clientes = carregar_clientes()
 
     opcoes = [
@@ -1954,6 +1961,7 @@ def criar_opcoes_clientes_venda():
 
 
 def criar_opcoes_livros_venda():
+    """Cria as opções de livros disponíveis para venda."""
     livros = carregar_livros_disponiveis()
     opcoes = []
 
@@ -2223,6 +2231,7 @@ def pagina_registar_venda():
 # Página Gestão de Catálogo
 
 def criar_tabela_movimentos_stock(movimentos):
+    """Cria a tabela dos últimos movimentos de stock."""
     if not movimentos:
         return html.Div(
             "Ainda não existem movimentos de stock registados.",
@@ -2272,6 +2281,7 @@ def criar_tabela_movimentos_stock(movimentos):
 
 
 def criar_tabela_historico_precos(historico):
+    """Cria a tabela das últimas alterações de preço."""
     if not historico:
         return html.Div(
             "Ainda não existem alterações de preço registadas.",
@@ -2895,6 +2905,7 @@ def pagina_gestao_catalogo():
 # Página Reservas
 
 def criar_tabela_reservas(dados):
+    """Cria a tabela das reservas registadas."""
     if not dados:
         return html.Div(
             "Ainda não existem reservas.",
@@ -3100,9 +3111,28 @@ def pagina_reservas():
                                 searchable=True,
                                 className="sale-dropdown",
                             ),
+                            html.Label(
+                                "Método de pagamento (ao concluir)",
+                                className="form-label",
+                            ),
+                            dcc.Dropdown(
+                                id="reservation-payment",
+                                options=[
+                                    {"label": metodo, "value": metodo}
+                                    for metodo in METODOS_PAGAMENTO
+                                ],
+                                value="Multibanco",
+                                clearable=False,
+                                className="sale-dropdown",
+                            ),
                             html.Div(
-                                className="reservation-actions single-action",
+                                className="reservation-actions",
                                 children=[
+                                    html.Button(
+                                        "Concluir (cliente levantou)",
+                                        id="reservation-complete",
+                                        className="primary-button",
+                                    ),
                                     html.Button(
                                         "Cancelar Reserva",
                                         id="reservation-cancel",
@@ -3111,7 +3141,7 @@ def pagina_reservas():
                                 ],
                             ),
                             html.P(
-                                "Quando o cliente levantar o livro, regista a venda normalmente em Registar Venda.",
+                                "Ao concluir, a venda é registada com o preço atual do livro e as unidades reservadas saem do stock.",
                                 className="form-help",
                             ),
                         ],
@@ -3131,8 +3161,6 @@ def pagina_reservas():
         ]
     )
 
-
-# Página Catálogo
 
 # Página Previsões
 
@@ -3361,6 +3389,7 @@ def pagina_previsoes():
 # Página Stock
 
 def criar_tabela_stock_completo(dados):
+    """Cria a tabela com o stock de todos os livros do catálogo."""
     if dados.empty:
         return html.Div(
             "Não existem livros no catálogo.",
@@ -3450,6 +3479,7 @@ def formatar_numero_simples(
     valor,
     casas=2,
 ):
+    """Formata um número com vírgula decimal; devolve «—» quando não há valor."""
     if valor is None or pd.isna(valor):
         return "—"
 
@@ -3463,6 +3493,7 @@ def criar_interpretacao_stock(
     dados,
     stock_completo,
 ):
+    """Constrói a página Interpretação do Stock a partir dos alertas e do stock completo."""
     dados = dados.copy()
     stock_completo = stock_completo.copy()
 
@@ -3723,7 +3754,7 @@ def criar_interpretacao_stock(
         )
 
         if sugestao == "Repor urgente":
-            # Usa a mesma quantidade da lista «Repor agora» (tabela de alertas).
+            # Quantidade a repor, igual à da lista «Repor agora».
             recomendada = dados.loc[
                 dados["titulo"] == linha["titulo"],
                 "quantidade_recomendada",
@@ -4040,6 +4071,7 @@ def criar_interpretacao_stock(
 
 
 def pagina_interpretacao_stock():
+    """Carrega os dados e constrói a página Interpretação do Stock."""
     expirar_reservas()
     dados = carregar_alertas_stock()
     stock_completo = carregar_stock_completo()
@@ -4470,6 +4502,7 @@ app.layout = html.Div(
 def atualizar_visao_geral_automaticamente(
     n_intervals,
 ):
+    """Atualiza os indicadores e gráficos da Visão Geral em intervalos regulares."""
     try:
         kpis = carregar_kpis()
 
@@ -4642,6 +4675,7 @@ def atualizar_visao_geral_automaticamente(
 # Controlos de quantidade
 
 def _ajustar_quantidade(valor_atual, acao, minimo=1):
+    """Soma ou subtrai uma unidade à quantidade, sem descer abaixo do mínimo."""
     try:
         valor = int(valor_atual)
     except (TypeError, ValueError):
@@ -4663,6 +4697,7 @@ def _ajustar_quantidade(valor_atual, acao, minimo=1):
     prevent_initial_call=True,
 )
 def alterar_quantidade_venda(menos, mais, valor_atual):
+    """Botões − e + da quantidade da venda."""
     return _ajustar_quantidade(
         valor_atual,
         ctx.triggered_id,
@@ -4678,6 +4713,7 @@ def alterar_quantidade_venda(menos, mais, valor_atual):
     prevent_initial_call=True,
 )
 def alterar_quantidade_reposicao(menos, mais, valor_atual):
+    """Botões − e + da quantidade a repor."""
     return _ajustar_quantidade(
         valor_atual,
         ctx.triggered_id,
@@ -4693,6 +4729,7 @@ def alterar_quantidade_reposicao(menos, mais, valor_atual):
     prevent_initial_call=True,
 )
 def alterar_quantidade_reserva(menos, mais, valor_atual):
+    """Botões − e + da quantidade da reserva."""
     return _ajustar_quantidade(
         valor_atual,
         ctx.triggered_id,
@@ -4708,6 +4745,7 @@ def alterar_quantidade_reserva(menos, mais, valor_atual):
     prevent_initial_call=True,
 )
 def alterar_stock_inicial(menos, mais, valor_atual):
+    """Botões − e + do stock inicial de um livro novo."""
     return _ajustar_quantidade(
         valor_atual,
         ctx.triggered_id,
@@ -4728,6 +4766,7 @@ def alternar_menu_operacoes(
     n_clicks,
     classe_atual,
 ):
+    """Abre ou fecha o submenu Operações."""
     if classe_atual == "submenu":
         return (
             "submenu collapsed",
@@ -4751,6 +4790,7 @@ def alternar_menu_analises(
     n_clicks,
     classe_atual,
 ):
+    """Abre ou fecha o submenu Análises."""
     if classe_atual == "submenu":
         return (
             "submenu collapsed",
@@ -4785,6 +4825,7 @@ def guardar_pagina_atual(
     interpretacao_stock,
     exportacoes,
 ):
+    """Guarda a página escolhida no menu lateral."""
     paginas_por_botao = {
         "btn-visao-geral": "visao-geral",
         "btn-venda": "venda",
@@ -4817,6 +4858,7 @@ def guardar_pagina_atual(
 def navegar(
     pagina_atual,
 ):
+    """Mostra a página guardada e destaca o botão correspondente no menu."""
     visao_normal = "menu-button"
     visao_ativo = "menu-button active"
     submenu_normal = "submenu-button"
@@ -4947,6 +4989,7 @@ def processar_exportacoes(
     data_inicio,
     data_fim,
 ):
+    """Gera e descarrega o Excel ou o PDF do período escolhido, ou o ficheiro Power BI."""
     acao = ctx.triggered_id
 
     try:
@@ -5013,31 +5056,36 @@ def processar_exportacoes(
     )
 
 
-# Quantidade da venda
+# Reservas
 
 @app.callback(
     Output("reservation-message", "children"),
     Output("reservation-refresh-store", "data"),
     Input("reservation-submit", "n_clicks"),
     Input("reservation-cancel", "n_clicks"),
+    Input("reservation-complete", "n_clicks"),
     State("reservation-client", "value"),
     State("reservation-book", "value"),
     State("reservation-quantity", "value"),
     State("reservation-limit-date", "date"),
     State("reservation-active", "value"),
+    State("reservation-payment", "value"),
     State("reservation-refresh-store", "data"),
     prevent_initial_call=True,
 )
 def gerir_reserva(
     criar_click,
     cancelar_click,
+    concluir_click,
     cliente_id,
     livro_id,
     quantidade,
     data_limite,
     reserva_id,
+    metodo_pagamento,
     refresh,
 ):
+    """Cria, cancela ou conclui uma reserva e mostra a mensagem do resultado."""
     acao = ctx.triggered_id
     refresh = int(refresh or 0)
 
@@ -5062,6 +5110,17 @@ def gerir_reserva(
                 "Cancelada",
             )
             mensagem = "Reserva cancelada com sucesso."
+
+        elif acao == "reservation-complete":
+            venda = concluir_reserva_com_venda(
+                reserva_id,
+                metodo_pagamento,
+            )
+            mensagem = (
+                f"Reserva concluída: venda n.º {venda['venda_id']} de "
+                f"{venda['quantidade']} × {venda['titulo']} "
+                f"({formatar_euro(venda['valor_total'])})."
+            )
 
         else:
             return "", refresh
@@ -5103,6 +5162,7 @@ def gerir_reserva(
     Input("reservation-refresh-store", "data"),
 )
 def atualizar_pagina_reservas(refresh):
+    """Atualiza as listas e a tabela da página Reservas."""
     reservas = carregar_reservas()
     clientes = carregar_clientes_reserva()
     livros = carregar_livros_reserva()
@@ -5147,6 +5207,7 @@ def atualizar_pagina_reservas(refresh):
 
 
 def _normalizar_genero_texto(valor):
+    """Passa o texto para minúsculas e sem acentos, para comparar géneros."""
     texto = unicodedata.normalize(
         "NFKD",
         str(valor or "").lower(),
@@ -5160,6 +5221,7 @@ def _normalizar_genero_texto(valor):
 
 
 def inferir_generos_api(assuntos):
+    """Sugere géneros do catálogo a partir dos assuntos devolvidos pela pesquisa por ISBN."""
     if not assuntos:
         return []
 
@@ -5474,8 +5536,8 @@ def preencher_novo_livro_por_isbn(isbn):
     if pvp:
         mensagem += " O preço indicado é o PVP."
 
-    # Importante: devolve valores vazios quando a fonte não encontrou
-    # um campo. Não usa no_update, para não manter dados do ISBN anterior.
+    # Devolve valores vazios quando a fonte não encontrou um campo,
+    # para não ficarem dados do ISBN anterior.
     return (
         titulo,
         autores_texto,
@@ -5498,6 +5560,7 @@ def preencher_novo_livro_por_isbn(isbn):
     Input("management-edit-refresh-store", "data"),
 )
 def atualizar_opcoes_livros_gestao(refresh, edit_refresh):
+    """Atualiza a lista de livros da Gestão de Catálogo."""
     livros = carregar_livros_gestao()
 
     return [
@@ -5526,6 +5589,7 @@ def atualizar_gestao_catalogo(
     edit_refresh,
 ):
     # Os históricos são gerais e independentes do livro selecionado.
+    """Mostra os dados do livro escolhido e os históricos de stock e de preços."""
     movimentos = consultar_movimentos_stock(
         limite=50,
     )
@@ -5642,6 +5706,7 @@ def atualizar_gestao_catalogo(
     Input("management-edit-refresh-store", "data"),
 )
 def preencher_formulario_edicao(livro_id, edit_refresh):
+    """Preenche a janela Editar com os dados do livro escolhido."""
     if not livro_id:
         return "", "", "", None, "", []
 
@@ -5685,6 +5750,7 @@ def guardar_edicao_livro(
     genero_ids,
     refresh,
 ):
+    """Valida e grava as alterações feitas na janela Editar."""
     if not livro_id:
         return (
             html.Div(
@@ -5781,6 +5847,7 @@ def gerir_catalogo_operacional(
     novos_generos,
     refresh,
 ):
+    """Repõe stock, altera o preço ou adiciona um livro novo, conforme o botão carregado."""
     acao = ctx.triggered_id
     refresh = int(refresh or 0)
 
@@ -6055,6 +6122,7 @@ clientside_callback(
     Input("sale-client", "value"),
 )
 def mostrar_formulario_novo_cliente(cliente_id):
+    """Mostra o formulário de novo cliente quando essa opção é escolhida na venda."""
     if cliente_id == "novo_cliente":
         return "new-client-form"
 
@@ -6435,6 +6503,7 @@ def gerir_venda(
 def atualizar_carrinho(
     carrinho,
 ):
+    """Mostra o carrinho da venda e o valor total."""
     carrinho = carrinho or []
 
     total = sum(
@@ -6452,7 +6521,7 @@ def atualizar_carrinho(
     )
 
 
-# Previsões: descer e subir de nível no gráfico (como o Drillthrough)
+# Previsões: descer e subir de nível no gráfico (drill down / drill up)
 
 @app.callback(
     Output("forecast-drill-state", "data"),

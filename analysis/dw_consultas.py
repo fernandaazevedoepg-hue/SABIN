@@ -8,7 +8,7 @@ from etl.extract import DW_SCHEMA
 
 
 def obter_data_referencia_sql():
-    #data usada para análise
+    """Devolve a data de referência da análise (SABIN_DATA_REFERENCIA), se existir."""
     data = os.getenv("SABIN_DATA_REFERENCIA")
 
     if data:
@@ -46,7 +46,7 @@ SQL_STOCK_ATUAL = f"""
         FROM {DW_SCHEMA}.fact_stock
     )
 """
-"""Última fotografia de stock, com as colunas da antiga dw.alertas_stock."""
+"""Última fotografia de stock de cada livro, com os níveis e a quantidade a repor."""
 
 
 def _ler(engine, sql, params=None):
@@ -260,7 +260,7 @@ SQL_ALERTAS_PREVISAO = f"""
         FROM {DW_SCHEMA}.fact_alerta_previsao
     )
 """
-"""Alertas de previsão, com as colunas da antiga dw.alertas_previsao."""
+"""Alertas de previsão do modelo mais recente."""
 
 
 def data_key(data):
