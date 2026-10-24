@@ -63,6 +63,7 @@ O código está organizado em diretórios, de acordo com as responsabilidades do
 - `database/validation/` — consultas SQL utilizadas na validação dos dados e das estruturas.
 - `assets/` — ficheiros CSS e JavaScript utilizados pela interface.
 - `outputs/` — ficheiros CSV produzidos por determinados processos analíticos.
+- `tests/` — testes unitários automáticos (TU01–TU15).
 - `powerbi/` — ficheiro do relatório Power BI.
 - `requirements.txt` — lista de dependências Python necessárias ao projeto.
 - `.env` — configuração das variáveis utilizadas na ligação à base de dados.
@@ -176,6 +177,16 @@ No ambiente local, abrir o seguinte endereço no navegador:
 http://127.0.0.1:8050/
 ```
 
+### 6.8. Executar os testes automáticos
+
+Os testes unitários TU01–TU15 verificam as regras de stock, a validação do ISBN e o cálculo dos KPIs. Não precisam de ligação à base de dados nem de instalar nada além das dependências do projeto. Na pasta do projeto, executar:
+
+```bash
+python -m unittest -v tests.test_unitarios
+```
+
+No fim deve aparecer `Ran 15 tests` e `OK`.
+
 ## 7. Publicação da aplicação
 
 A versão online do SABIN utiliza o Render para alojar a aplicação Web e o Supabase para alojar a base de dados PostgreSQL.
@@ -184,6 +195,21 @@ A configuração do ambiente online utiliza as seguintes variáveis:
 
 - `DATABASE_URL` — URL de ligação à base de dados.
 - `SABIN_ONLINE` — variável que identifica o modo de funcionamento online.
+- `SABIN_UTILIZADOR` e `SABIN_PALAVRA_PASSE` — conta única de acesso à aplicação (ver secção 7.1).
+
+### 7.1. Acesso com login
+
+A aplicação online pede utilizador e palavra-passe. Existe uma única conta, definida pelas variáveis `SABIN_UTILIZADOR` e `SABIN_PALAVRA_PASSE` no Render (*Environment*), e não é possível criar contas novas. As credenciais de acesso para avaliação são entregues ao júri juntamente com o relatório.
+
+Estas duas variáveis não são colocadas no `.env`, porque esse ficheiro está público no repositório. Sem elas (por exemplo, ao executar localmente), a aplicação abre sem pedir login. Para testar o login localmente no Windows (PowerShell):
+
+```powershell
+$env:SABIN_UTILIZADOR="juri"
+$env:SABIN_PALAVRA_PASSE="escolher-uma-palavra-passe"
+python app.py
+```
+
+O botão «Terminar sessão» fica no fundo do menu lateral. A sessão dura no máximo 12 horas.
 
 A aplicação é executada em produção através do Gunicorn. O comando de arranque configurado no serviço de alojamento deve corresponder ao objeto de aplicação definido no código.
 

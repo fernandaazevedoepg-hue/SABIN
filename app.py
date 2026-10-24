@@ -84,6 +84,7 @@ if not DATABASE_URL:
 
 
 from services.base_dados import engine
+from services.autenticacao import ativar_autenticacao, login_ativo
 
 
 # Formatação
@@ -1501,7 +1502,18 @@ def criar_sidebar():
                     html.Small(
                         "Sistema de apoio à decisão"
                     ),
-                ],
+                ]
+                + (
+                    [
+                        html.A(
+                            "Terminar sessão",
+                            href="/logout",
+                            className="sidebar-logout",
+                        )
+                    ]
+                    if login_ativo()
+                    else []
+                ),
             ),
         ],
     )
@@ -4364,6 +4376,10 @@ app.title = "SABIN"
 
 # Interface WSGI usada pelo Gunicorn na publicação online.
 server = app.server
+
+# Login simples com uma única conta (variáveis SABIN_UTILIZADOR e
+# SABIN_PALAVRA_PASSE no Render). Sem as variáveis, a app abre sem login.
+ativar_autenticacao(server)
 
 
 app.layout = html.Div(
