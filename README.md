@@ -113,20 +113,6 @@ No Windows, ativar o ambiente virtual através do PowerShell:
 .\venv\Scripts\Activate.ps1
 ```
 
-Se o PowerShell apresentar um erro de permissões ou indicar que a execução de scripts está desativada, executar o comando seguinte na mesma janela:
-
-```powershell
-Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process
-```
-
-Quando solicitado, confirmar a alteração e voltar a ativar o ambiente virtual:
-
-```powershell
-.\venv\Scripts\Activate.ps1
-```
-
-Esta definição aplica-se apenas ao processo atual do PowerShell. Ao fechar a janela, a política temporária deixa de estar em vigor.
-
 Se estiver a ser utilizado o Command Prompt (CMD), executar:
 
 ```bat
@@ -232,17 +218,7 @@ A configuração do ambiente online utiliza as seguintes variáveis:
 
 ### 7.1. Acesso com login
 
-A aplicação online pede utilizador e palavra-passe. Existe uma única conta, definida pelas variáveis `SABIN_UTILIZADOR` e `SABIN_PALAVRA_PASSE` no Render (*Environment*), e não é possível criar contas novas.
-
-**Credenciais de acesso para avaliação:**
-
-| Campo | Valor |
-|---|---|
-| Endereço | https://sabin-olmt.onrender.com/ |
-| Utilizador | `admin` |
-| Palavra-passe | `12345` |
-
-Estas credenciais destinam-se à avaliação académica da versão de demonstração do SABIN.
+A aplicação online pede utilizador e palavra-passe. Existe uma única conta, definida pelas variáveis `SABIN_UTILIZADOR` e `SABIN_PALAVRA_PASSE` no Render (*Environment*), e não é possível criar contas novas. As credenciais de acesso para avaliação são entregues ao júri juntamente com o relatório.
 
 Estas duas variáveis não são colocadas no `.env`, porque esse ficheiro está público no repositório. Sem elas (por exemplo, ao executar localmente), a aplicação abre sem pedir login. Para testar o login localmente no Windows (PowerShell):
 
